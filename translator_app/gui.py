@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from dataclasses import replace
 from pathlib import Path
-from tkinter import BooleanVar, StringVar, TclError, Tk, filedialog, messagebox
+from tkinter import BooleanVar, StringVar, TclError, Tk, Toplevel, filedialog
 from tkinter import scrolledtext
 from tkinter import ttk
 
@@ -891,13 +891,25 @@ class TranslatorGuiApp:
         values = self._settings_env_values()
         write_env_values(ENV_PATH, values)
         self.env_values = values
-        messagebox.showinfo("Settings", f"Settings saved to {ENV_PATH.resolve()}.")
+        self._show_info("Settings", f"Settings saved to {ENV_PATH.resolve()}.")
+
+    def _show_info(self, title: str, message: str) -> None:
+        show_copyable_message(self.root, title, message, "info")
+
+    def _show_error(self, title: str, message: str) -> None:
+        show_copyable_message(self.root, title, message, "error")
+
+    def _show_warning(self, title: str, message: str) -> None:
+        show_copyable_message(self.root, title, message, "warning")
+
+    def _ask_yes_no(self, title: str, message: str) -> bool:
+        return ask_copyable_yes_no(self.root, title, message)
 
     def test_database_connection(self) -> None:
         try:
             connection_string = self._build_connection_settings().build_connection_string()
         except Exception as exc:
-            messagebox.showerror("Settings Error", str(exc))
+            self._show_error("Settings Error", str(exc))
             return
 
         self._append_log("Testing database connection...")
@@ -931,7 +943,7 @@ class TranslatorGuiApp:
     def test_libretranslate(self) -> None:
         url = self.libretranslate_url_var.get().strip().rstrip("/")
         if not url:
-            messagebox.showerror("LibreTranslate", "LibreTranslate URL is required.")
+            self._show_error("LibreTranslate", "LibreTranslate URL is required.")
             return
 
         self._append_log("Testing LibreTranslate...")
@@ -985,7 +997,7 @@ class TranslatorGuiApp:
                 force_dry_run=True
             )
         except Exception as exc:
-            messagebox.showerror("RESX Settings Error", str(exc))
+            self._show_error("RESX Settings Error", str(exc))
             return
 
         self._start_resx_job("resx-scan", resx_config, translator_config)
@@ -994,11 +1006,11 @@ class TranslatorGuiApp:
         try:
             resx_config, translator_config = self._build_resx_runtime_config()
         except Exception as exc:
-            messagebox.showerror("RESX Settings Error", str(exc))
+            self._show_error("RESX Settings Error", str(exc))
             return
 
         if not resx_config.dry_run:
-            confirmed = messagebox.askyesno(
+            confirmed = self._ask_yes_no(
                 "Confirm RESX Write Mode",
                 "Dry-run is off. The app will create or update RESX files. Continue?",
             )
@@ -1014,7 +1026,7 @@ class TranslatorGuiApp:
         translator_config: RuntimeConfig,
     ) -> None:
         if self._is_worker_running():
-            messagebox.showwarning("Already Running", "Another operation is already running.")
+            self._show_warning("Already Running", "Another operation is already running.")
             return
 
         self.running_job_name = job_name
@@ -1077,7 +1089,7 @@ class TranslatorGuiApp:
     def start_test_then_prompt(self) -> None:
         test_table = self.test_table_var.get().strip()
         if not test_table:
-            messagebox.showerror("Test Table", "Enter a test table name.")
+            self._show_error("Test Table", "Enter a test table name.")
             return
 
         try:
@@ -1095,7 +1107,7 @@ class TranslatorGuiApp:
                 table_name=test_table_name,
             )
         except Exception as exc:
-            messagebox.showerror("Settings Error", str(exc))
+            self._show_error("Settings Error", str(exc))
             return
 
         self.followup_config = full_config
@@ -1104,7 +1116,7 @@ class TranslatorGuiApp:
     def start_single_table(self) -> None:
         table_name = self.operation_table_var.get().strip() or self.test_table_var.get().strip()
         if not table_name:
-            messagebox.showerror(
+            self._show_error(
                 "Table",
                 "Enter a table name in Only table or Test table.",
             )
@@ -1120,7 +1132,7 @@ class TranslatorGuiApp:
                 table_name=parsed_table_name,
             )
         except Exception as exc:
-            messagebox.showerror("Settings Error", str(exc))
+            self._show_error("Settings Error", str(exc))
             return
 
         self.followup_config = None
@@ -1133,7 +1145,7 @@ class TranslatorGuiApp:
                 table_name=None,
             )
         except Exception as exc:
-            messagebox.showerror("Settings Error", str(exc))
+            self._show_error("Settings Error", str(exc))
             return
 
         self.followup_config = None
@@ -1141,11 +1153,11 @@ class TranslatorGuiApp:
 
     def _start_job(self, job_name: str, config: RuntimeConfig) -> None:
         if self._is_worker_running():
-            messagebox.showwarning("Already Running", "Another operation is already running.")
+            self._show_warning("Already Running", "Another operation is already running.")
             return
 
         if not config.dry_run:
-            confirmed = messagebox.askyesno(
+            confirmed = self._ask_yes_no(
                 "Confirm Execute Mode",
                 "Dry-run is off. The app will insert new rows. Continue?",
             )
@@ -1380,17 +1392,37 @@ class TranslatorGuiApp:
         return tuple(deduped_names)
 
     def _build_connection_settings(self) -> SqlServerConnectionSettings:
+        username = self.username_var.get().strip() or None
+        password = self.password_var.get()
         return SqlServerConnectionSettings(
             connection_string=self.connection_string_var.get().strip() or None,
             driver=self.driver_var.get().strip() or "ODBC Driver 18 for SQL Server",
             server=self.server_var.get().strip(),
             database=self.database_var.get().strip(),
-            username=self.username_var.get().strip() or None,
-            password=self.password_var.get(),
-            trusted_connection=self.trusted_connection_var.get(),
+            username=username,
+            password=password,
+            trusted_connection=self._effective_trusted_connection(username, password),
             encrypt=self.encrypt_var.get(),
             trust_server_certificate=self.trust_server_certificate_var.get(),
         )
+
+    def _effective_trusted_connection(
+        self,
+        username: str | None = None,
+        password: str | None = None,
+    ) -> bool:
+        if username is None:
+            current_username = self.username_var.get().strip() or None
+        else:
+            current_username = username
+
+        if password is None:
+            current_password = self.password_var.get()
+        else:
+            current_password = password
+
+        has_credentials = bool(current_username) or current_password not in {None, ""}
+        return self.trusted_connection_var.get() and not has_credentials
 
     def _settings_env_values(self) -> dict[str, str]:
         return {
@@ -1401,7 +1433,7 @@ class TranslatorGuiApp:
             "SQLSERVER_USERNAME": self.username_var.get().strip(),
             "SQLSERVER_PASSWORD": self.password_var.get(),
             "SQLSERVER_TRUSTED_CONNECTION": bool_to_env(
-                self.trusted_connection_var.get()
+                self._effective_trusted_connection()
             ),
             "SQLSERVER_NO_ENCRYPT": bool_to_env(not self.encrypt_var.get()),
             "SQLSERVER_TRUST_SERVER_CERTIFICATE": bool_to_env(
@@ -1473,11 +1505,11 @@ class TranslatorGuiApp:
             elif event_type == "message":
                 title, message = payload
                 self._append_log(str(message))
-                messagebox.showinfo(str(title), str(message))
+                self._show_info(str(title), str(message))
             elif event_type == "error-message":
                 title, message = payload
                 self._append_log(str(message))
-                messagebox.showerror(str(title), str(message))
+                self._show_error(str(title), str(message))
 
         self.root.after(200, self._poll_events)
 
@@ -1548,7 +1580,7 @@ class TranslatorGuiApp:
         failed = getattr(summary, "failed_entries", 0)
         created = getattr(summary, "created_files", 0)
         updated = getattr(summary, "updated_files", 0)
-        messagebox.showinfo(
+        self._show_info(
             "RESX Finished",
             "RESX operation finished.\n"
             f"Translated: {translated}\n"
@@ -1579,7 +1611,7 @@ class TranslatorGuiApp:
         inserted_rows = getattr(summary, "inserted_rows", 0)
         failed_rows = getattr(summary, "failed_rows", 0)
         skipped_tables = getattr(summary, "skipped_tables", 0)
-        should_continue = messagebox.askyesno(
+        should_continue = self._ask_yes_no(
             "Continue Operation",
             "Test table finished.\n"
             f"Inserted: {inserted_rows}\n"
@@ -1604,7 +1636,7 @@ class TranslatorGuiApp:
         self.log_file_var.set(log_file)
         self._append_log(f"Job failed: {job_name}: {message}")
         self._append_log(details)
-        messagebox.showerror("Job Error", message)
+        self._show_error("Job Error", message)
 
     def _handle_resx_job_error(
         self,
@@ -1618,7 +1650,7 @@ class TranslatorGuiApp:
         self.resx_log_file_var.set(log_file)
         self._append_log(f"Job failed: {job_name}: {message}")
         self._append_log(details)
-        messagebox.showerror("RESX Job Error", message)
+        self._show_error("RESX Job Error", message)
 
     def _reset_progress(self) -> None:
         self.status_var.set("Starting...")
@@ -1691,6 +1723,150 @@ class TranslatorGuiApp:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
+
+
+def show_copyable_message(
+    parent: Tk,
+    title: str,
+    message: str,
+    kind: str,
+) -> None:
+    dialog = build_copyable_dialog(parent, title, message, kind)
+    buttons = ttk.Frame(dialog, style="App.TFrame")
+    buttons.grid(row=2, column=0, sticky="e", padx=14, pady=(0, 14))
+
+    ttk.Button(
+        buttons,
+        text="Copy",
+        command=lambda: copy_to_clipboard(parent, message),
+    ).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(
+        buttons,
+        text="OK",
+        command=dialog.destroy,
+        style="Accent.TButton",
+    ).grid(row=0, column=1)
+
+    show_modal_dialog(parent, dialog)
+
+
+def ask_copyable_yes_no(parent: Tk, title: str, message: str) -> bool:
+    result = BooleanVar(value=False)
+    dialog = build_copyable_dialog(parent, title, message, "question")
+    buttons = ttk.Frame(dialog, style="App.TFrame")
+    buttons.grid(row=2, column=0, sticky="e", padx=14, pady=(0, 14))
+
+    def close_with(value: bool) -> None:
+        result.set(value)
+        dialog.destroy()
+
+    ttk.Button(
+        buttons,
+        text="Copy",
+        command=lambda: copy_to_clipboard(parent, message),
+    ).grid(row=0, column=0, padx=(0, 8))
+    ttk.Button(
+        buttons,
+        text="No",
+        command=lambda: close_with(False),
+    ).grid(row=0, column=1, padx=(0, 8))
+    ttk.Button(
+        buttons,
+        text="Yes",
+        command=lambda: close_with(True),
+        style="Accent.TButton",
+    ).grid(row=0, column=2)
+
+    show_modal_dialog(parent, dialog)
+    return result.get()
+
+
+def build_copyable_dialog(parent: Tk, title: str, message: str, kind: str) -> Toplevel:
+    dialog = Toplevel(parent)
+    dialog.title(title)
+    dialog.configure(background=BG_COLOR)
+    dialog.minsize(520, 220)
+    dialog.resizable(True, True)
+    dialog.columnconfigure(0, weight=1)
+    dialog.rowconfigure(1, weight=1)
+
+    heading = ttk.Frame(dialog, padding=(14, 14, 14, 8), style="App.TFrame")
+    heading.grid(row=0, column=0, sticky="ew")
+    heading.columnconfigure(0, weight=1)
+    ttk.Label(
+        heading,
+        text=title,
+        style="Header.TLabel",
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Label(
+        heading,
+        text=copyable_dialog_kind_label(kind),
+        style="SubHeader.TLabel",
+    ).grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+    text_height = min(max(message.count("\n") + 4, 8), 18)
+    text = scrolledtext.ScrolledText(
+        dialog,
+        width=84,
+        height=text_height,
+        wrap="word",
+        bg="#ffffff",
+        fg=TEXT_COLOR,
+        insertbackground=TEXT_COLOR,
+        selectbackground="#bfdbfe",
+        relief="solid",
+        borderwidth=1,
+        padx=10,
+        pady=10,
+        font=("TkDefaultFont", 10),
+    )
+    text.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
+    text.insert("1.0", message)
+    text.configure(state="disabled")
+    dialog.bind("<Escape>", lambda _event: dialog.destroy())
+    return dialog
+
+
+def show_modal_dialog(parent: Tk, dialog: Toplevel) -> None:
+    dialog.transient(parent)
+    dialog.update_idletasks()
+    center_dialog(parent, dialog)
+    try:
+        dialog.grab_set()
+    except TclError:
+        pass
+    dialog.focus_set()
+    parent.wait_window(dialog)
+
+
+def center_dialog(parent: Tk, dialog: Toplevel) -> None:
+    parent.update_idletasks()
+    dialog.update_idletasks()
+    width = dialog.winfo_width()
+    height = dialog.winfo_height()
+    parent_x = parent.winfo_rootx()
+    parent_y = parent.winfo_rooty()
+    parent_width = parent.winfo_width()
+    parent_height = parent.winfo_height()
+    x = parent_x + max((parent_width - width) // 2, 0)
+    y = parent_y + max((parent_height - height) // 2, 0)
+    dialog.geometry(f"+{x}+{y}")
+
+
+def copy_to_clipboard(parent: Tk, text: str) -> None:
+    parent.clipboard_clear()
+    parent.clipboard_append(text)
+    parent.update_idletasks()
+
+
+def copyable_dialog_kind_label(kind: str) -> str:
+    labels = {
+        "info": "Information",
+        "error": "Error details",
+        "warning": "Warning",
+        "question": "Confirmation",
+    }
+    return labels.get(kind, "Message")
 
 
 def add_entry(

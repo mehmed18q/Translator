@@ -28,14 +28,20 @@ class SqlServerConnectionSettings:
             f"DATABASE={self.database}",
         ]
 
-        if self.trusted_connection:
-            parts.append("Trusted_Connection=yes")
-        else:
+        has_explicit_credentials = bool(self.username) or self.password not in {None, ""}
+
+        if has_explicit_credentials:
             if not self.username:
                 raise ValueError("SQL Server username is not configured.")
             if self.password is None:
                 raise ValueError("SQL Server password is not configured.")
             parts.extend([f"UID={self.username}", f"PWD={self.password}"])
+        elif self.trusted_connection:
+            parts.append("Trusted_Connection=yes")
+        else:
+            raise ValueError(
+                "Configure SQL Server username/password or enable Trusted Connection."
+            )
 
         parts.append(f"Encrypt={'yes' if self.encrypt else 'no'}")
         parts.append(

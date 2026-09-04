@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from translator_app.cli import split_table_reference
+from translator_app.config import SqlServerConnectionSettings
 from translator_app.languages import get_language
 from translator_app.models import (
     ColumnInfo,
@@ -33,6 +34,25 @@ def column(
 
 
 class TablePlanTests(unittest.TestCase):
+    def test_connection_string_prefers_explicit_credentials(self) -> None:
+        settings = SqlServerConnectionSettings(
+            connection_string=None,
+            driver="ODBC Driver 18 for SQL Server",
+            server="localhost",
+            database="AppDb",
+            username="sa",
+            password="Password",
+            trusted_connection=True,
+            encrypt=True,
+            trust_server_certificate=True,
+        )
+
+        connection_string = settings.build_connection_string()
+
+        self.assertIn("UID=sa", connection_string)
+        self.assertIn("PWD=Password", connection_string)
+        self.assertNotIn("Trusted_Connection=yes", connection_string)
+
     def test_split_table_reference_accepts_schema_dot_table(self) -> None:
         self.assertEqual(
             split_table_reference("dbo.SiteMenuLocalize", None),
