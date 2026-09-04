@@ -3,29 +3,42 @@ from __future__ import annotations
 import unittest
 
 from translator_app.models import ColumnInfo, LocalizeTable, build_table_translation_plan
-from translator_app.sqlserver.repository import SqlServerLocalizationRepository
+from translator_app.sqlserver.repository import (
+    TARGET_EXISTS_COLUMN_NAME,
+    SqlServerLocalizationRepository,
+    target_value_column_name,
+)
 
 
 class FakeConnection:
-    def __init__(self, batches: list[list[tuple[object, ...]]]) -> None:
+    def __init__(
+        self,
+        batches: list[list[tuple[object, ...]]],
+        description: list[tuple[str]] | None = None,
+    ) -> None:
         self.batches = batches
         self.cursors: list[FakeCursor] = []
+        self.description = description or [("SampleId",), ("Title",)]
 
     def cursor(self) -> "FakeCursor":
         rows = self.batches.pop(0) if self.batches else []
-        cursor = FakeCursor(rows)
+        cursor = FakeCursor(rows, self.description)
         self.cursors.append(cursor)
         return cursor
 
 
 class FakeCursor:
-    description = [("SampleId",), ("Title",)]
-
-    def __init__(self, rows: list[tuple[object, ...]]) -> None:
+    def __init__(
+        self,
+        rows: list[tuple[object, ...]],
+        description: list[tuple[str]],
+    ) -> None:
         self.rows = rows
+        self.description = description
         self.sql = ""
         self.params: tuple[object, ...] = ()
         self.closed = False
+        self.rowcount = 1
 
     def execute(self, sql: str, *params: object) -> "FakeCursor":
         self.sql = sql
@@ -75,6 +88,83 @@ class RepositoryTests(unittest.TestCase):
         self.assertEqual(connection.cursors[2].params, (1, 2, 5))
         self.assertTrue(all(cursor.closed for cursor in connection.cursors))
 
+    def test_iter_pending_source_rows_includes_existing_target_text_values(self) -> None:
+        connection = FakeConnection(
+            batches=[
+                [(1, "One", "Desc", 1, "One target", None)],
+                [],
+            ],
+            description=[
+                ("SampleId",),
+                ("Title",),
+                ("Description",),
+                (TARGET_EXISTS_COLUMN_NAME,),
+                (target_value_column_name("Title"),),
+                (target_value_column_name("Description"),),
+            ],
+        )
+        repository = SqlServerLocalizationRepository(connection)
+        plan = build_table_translation_plan(build_table_with_description())
+
+        rows = list(
+            repository.iter_pending_source_rows(
+                plan,
+                source_language_id=1,
+                target_language_id=2,
+                batch_size=10,
+            )
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "SampleId": 1,
+                    "Title": "One",
+                    "Description": "Desc",
+                    TARGET_EXISTS_COLUMN_NAME: 1,
+                    target_value_column_name("Title"): "One target",
+                    target_value_column_name("Description"): None,
+                }
+            ],
+        )
+        self.assertIn(
+            "LEFT JOIN [dbo].[SampleLocalize] AS dst",
+            connection.cursors[0].sql,
+        )
+        self.assertIn("dst.[LanguageId] IS NULL", connection.cursors[0].sql)
+        self.assertIn(
+            "CAST(dst.[Description] AS NVARCHAR(MAX))",
+            connection.cursors[0].sql,
+        )
+        self.assertIn(
+            "CAST(src.[Description] AS NVARCHAR(MAX))",
+            connection.cursors[0].sql,
+        )
+        self.assertIn("IS NOT NULL", connection.cursors[0].sql)
+        self.assertEqual(connection.cursors[0].params, (2, 1))
+
+    def test_update_translation_columns_only_updates_empty_target_columns(self) -> None:
+        connection = FakeConnection(batches=[[]])
+        repository = SqlServerLocalizationRepository(connection)
+        plan = build_table_translation_plan(build_table_with_description())
+
+        updated_columns = repository.update_translation_columns(
+            plan,
+            entity_key_value=7,
+            translated_values={"Description": "Translated"},
+            target_language_id=2,
+        )
+
+        self.assertEqual(updated_columns, 1)
+        self.assertIn("UPDATE [dbo].[SampleLocalize]", connection.cursors[0].sql)
+        self.assertIn("SET [Description] = ?", connection.cursors[0].sql)
+        self.assertIn(
+            "NULLIF(LTRIM(RTRIM(CAST([Description] AS NVARCHAR(MAX)))), N'') IS NULL",
+            connection.cursors[0].sql,
+        )
+        self.assertEqual(connection.cursors[0].params, ("Translated", 7, 2))
+
 
 def build_table() -> LocalizeTable:
     return LocalizeTable(
@@ -86,6 +176,25 @@ def build_table() -> LocalizeTable:
             column("SampleId", "int"),
             column("LanguageId", "int"),
             column("Title", "nvarchar"),
+        ),
+        foreign_keys=(),
+        language_column_name="LanguageId",
+        entity_key_column_name="SampleId",
+        referenced_table_name="Sample",
+    )
+
+
+def build_table_with_description() -> LocalizeTable:
+    return LocalizeTable(
+        schema_name="dbo",
+        table_name="SampleLocalize",
+        object_id=1,
+        columns=(
+            column("Id", "int", is_identity=True, is_primary_key=True),
+            column("SampleId", "int"),
+            column("LanguageId", "int"),
+            column("Title", "nvarchar"),
+            column("Description", "nvarchar"),
         ),
         foreign_keys=(),
         language_column_name="LanguageId",

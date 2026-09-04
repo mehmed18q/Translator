@@ -12,7 +12,11 @@ from translator_app.models import (
     build_table_translation_plan,
 )
 from translator_app.retry import run_with_retry
-from translator_app.sqlserver.repository import SqlServerLocalizationRepository
+from translator_app.sqlserver.repository import (
+    TARGET_EXISTS_COLUMN_NAME,
+    SqlServerLocalizationRepository,
+    target_value_column_name,
+)
 from translator_app.sqlserver.schema_reader import SqlServerSchemaReader
 from translator_app.translators.base import Translator
 
@@ -25,6 +29,7 @@ class TranslationSummary:
     pending_rows: int = 0
     processed_rows: int = 0
     inserted_rows: int = 0
+    updated_rows: int = 0
     skipped_existing_rows: int = 0
     failed_rows: int = 0
 
@@ -39,6 +44,7 @@ class ProgressSnapshot:
     processed_rows: int
     remaining_rows: int
     inserted_rows: int
+    updated_rows: int
     skipped_existing_rows: int
     failed_rows: int
     percent: float
@@ -105,17 +111,18 @@ class DatabaseTranslationService:
 
         if config.dry_run:
             self.logger.info(
-                "Dry-run finished. Run with --execute to insert translated rows."
+                "Dry-run finished. Run with --execute to insert or update translated rows."
             )
             self._emit_progress(summary, phase="finished", total_tables=len(tables))
             return summary
 
         self._translate_and_insert(planned_tables, config, summary)
         self.logger.info(
-            "Finished: pending=%s processed=%s inserted=%s skipped_existing=%s failed=%s skipped_tables=%s",
+            "Finished: pending=%s processed=%s inserted=%s updated=%s skipped_existing=%s failed=%s skipped_tables=%s",
             summary.pending_rows,
             summary.processed_rows,
             summary.inserted_rows,
+            summary.updated_rows,
             summary.skipped_existing_rows,
             summary.failed_rows,
             summary.skipped_tables,
@@ -139,8 +146,8 @@ class DatabaseTranslationService:
             try:
                 plan = build_table_translation_plan(table)
                 pending_count = run_with_retry(
-                    lambda table=table: self.repository.count_missing_rows(
-                        table,
+                    lambda plan=plan: self.repository.count_pending_rows(
+                        plan,
                         source_language_id=config.source_language.id,
                         target_language_id=config.target_language.id,
                     ),
@@ -224,7 +231,7 @@ class DatabaseTranslationService:
                 table.entity_key_column_name,
             )
             try:
-                for source_row in self.repository.iter_missing_source_rows(
+                for source_row in self.repository.iter_pending_source_rows(
                     plan,
                     source_language_id=config.source_language.id,
                     target_language_id=config.target_language.id,
@@ -237,14 +244,8 @@ class DatabaseTranslationService:
                     entity_value = source_row.get(table.entity_key_column_name or "")
                     row_status = "failed"
                     try:
-                        if self.repository.destination_exists(
-                            table,
-                            entity_key_value=entity_value,
-                            target_language_id=config.target_language.id,
-                        ):
-                            summary.skipped_existing_rows += 1
-                            row_status = "skipped-existing"
-                        else:
+                        target_exists = bool(source_row.get(TARGET_EXISTS_COLUMN_NAME))
+                        if not target_exists:
                             translated_values = self._translate_row(
                                 plan,
                                 source_row,
@@ -268,6 +269,46 @@ class DatabaseTranslationService:
                             )
                             summary.inserted_rows += 1
                             row_status = "inserted"
+                        else:
+                            missing_columns = self._missing_target_text_columns(
+                                plan,
+                                source_row,
+                            )
+                            if missing_columns:
+                                translated_values = self._translate_row(
+                                    plan,
+                                    source_row,
+                                    config,
+                                    column_names=missing_columns,
+                                )
+                                updated_columns = run_with_retry(
+                                    lambda: self.repository.update_translation_columns(
+                                        plan,
+                                        entity_key_value=entity_value,
+                                        translated_values=translated_values,
+                                        target_language_id=config.target_language.id,
+                                    ),
+                                    operation_name=(
+                                        f"update {table.display_name} "
+                                        f"{table.entity_key_column_name}={entity_value}"
+                                    ),
+                                    attempts=config.retry.attempts,
+                                    initial_delay_seconds=config.retry.initial_delay_seconds,
+                                    backoff_factor=config.retry.backoff_factor,
+                                    logger=self.logger,
+                                )
+                                if updated_columns:
+                                    summary.updated_rows += 1
+                                    row_status = (
+                                        "updated:"
+                                        + ",".join(translated_values.keys())
+                                    )
+                                else:
+                                    summary.skipped_existing_rows += 1
+                                    row_status = "skipped-existing"
+                            else:
+                                summary.skipped_existing_rows += 1
+                                row_status = "skipped-existing"
                     except KeyboardInterrupt:
                         raise
                     except Exception as exc:
@@ -296,7 +337,7 @@ class DatabaseTranslationService:
                             table_processed_rows=table_processed,
                         )
                         self.logger.info(
-                            "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s skipped_existing=%s failed=%s",
+                            "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s updated=%s skipped_existing=%s failed=%s",
                             format_progress(summary.processed_rows, summary.pending_rows),
                             table_index,
                             len(planned_tables),
@@ -306,6 +347,7 @@ class DatabaseTranslationService:
                             entity_value,
                             row_status,
                             summary.inserted_rows,
+                            summary.updated_rows,
                             summary.skipped_existing_rows,
                             summary.failed_rows,
                         )
@@ -356,10 +398,12 @@ class DatabaseTranslationService:
         plan: TableTranslationPlan,
         source_row: dict[str, object],
         config: RuntimeConfig,
+        *,
+        column_names: tuple[str, ...] | None = None,
     ) -> dict[str, object]:
         translated_values: dict[str, object] = {}
 
-        for column_name in plan.text_column_names:
+        for column_name in column_names or plan.text_column_names:
             original_value = source_row.get(column_name)
             if original_value is None:
                 translated_values[column_name] = None
@@ -395,6 +439,19 @@ class DatabaseTranslationService:
 
         return translated_values
 
+    def _missing_target_text_columns(
+        self,
+        plan: TableTranslationPlan,
+        source_row: dict[str, object],
+    ) -> tuple[str, ...]:
+        missing_columns: list[str] = []
+        for column_name in plan.text_column_names:
+            source_value = source_row.get(column_name)
+            target_value = source_row.get(target_value_column_name(column_name))
+            if has_text_value(source_value) and not has_text_value(target_value):
+                missing_columns.append(column_name)
+        return tuple(missing_columns)
+
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())
 
@@ -423,6 +480,7 @@ class DatabaseTranslationService:
             processed_rows=summary.processed_rows,
             remaining_rows=remaining_rows,
             inserted_rows=summary.inserted_rows,
+            updated_rows=summary.updated_rows,
             skipped_existing_rows=summary.skipped_existing_rows,
             failed_rows=summary.failed_rows,
             percent=calculate_percent(summary.processed_rows, summary.pending_rows),
@@ -462,3 +520,7 @@ def detect_text_format(column_name: str, text: str) -> str:
     if HTML_PATTERN.search(text):
         return "html"
     return "text"
+
+
+def has_text_value(value: object) -> bool:
+    return value is not None and bool(str(value).strip())

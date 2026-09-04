@@ -263,11 +263,13 @@ def should_continue_after_test(
         return False
 
     inserted_rows = getattr(test_summary, "inserted_rows", 0)
+    updated_rows = getattr(test_summary, "updated_rows", 0)
     failed_rows = getattr(test_summary, "failed_rows", 0)
     skipped_tables = getattr(test_summary, "skipped_tables", 0)
     return prompt_yes_no(
         "مرحله تست تمام شد "
-        f"(inserted={inserted_rows}, failed={failed_rows}, skipped_tables={skipped_tables}). "
+        f"(inserted={inserted_rows}, updated={updated_rows}, "
+        f"failed={failed_rows}, skipped_tables={skipped_tables}). "
         "ادامه همه جدول‌ها انجام شود؟",
         default=False,
     )

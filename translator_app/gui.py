@@ -285,6 +285,7 @@ class TranslatorGuiApp:
         self.processed_rows_var = StringVar(value="0")
         self.remaining_rows_var = StringVar(value="0")
         self.inserted_rows_var = StringVar(value="0")
+        self.updated_rows_var = StringVar(value="0")
         self.skipped_existing_rows_var = StringVar(value="0")
         self.failed_rows_var = StringVar(value="0")
         self.operation_started_var = StringVar(value="-")
@@ -628,11 +629,12 @@ class TranslatorGuiApp:
         self._add_metric(metrics, 1, 0, "Processed rows", self.processed_rows_var)
         self._add_metric(metrics, 1, 1, "Remaining rows", self.remaining_rows_var)
         self._add_metric(metrics, 1, 2, "Inserted rows", self.inserted_rows_var)
-        self._add_metric(metrics, 1, 3, "Existing skipped", self.skipped_existing_rows_var)
-        self._add_metric(metrics, 2, 0, "Failed rows", self.failed_rows_var)
-        self._add_metric(metrics, 2, 1, "Started", self.operation_started_var)
-        self._add_metric(metrics, 2, 2, "Finished", self.operation_finished_var)
-        self._add_metric(metrics, 2, 3, "Duration", self.operation_duration_var)
+        self._add_metric(metrics, 1, 3, "Updated rows", self.updated_rows_var)
+        self._add_metric(metrics, 2, 0, "Existing skipped", self.skipped_existing_rows_var)
+        self._add_metric(metrics, 2, 1, "Failed rows", self.failed_rows_var)
+        self._add_metric(metrics, 2, 2, "Started", self.operation_started_var)
+        self._add_metric(metrics, 2, 3, "Finished", self.operation_finished_var)
+        self._add_metric(metrics, 3, 0, "Duration", self.operation_duration_var)
 
     def _build_resources_tab(self) -> None:
         self.resources_tab.columnconfigure(0, weight=1)
@@ -1549,6 +1551,7 @@ class TranslatorGuiApp:
         self.processed_rows_var.set(str(snapshot.processed_rows))
         self.remaining_rows_var.set(str(snapshot.remaining_rows))
         self.inserted_rows_var.set(str(snapshot.inserted_rows))
+        self.updated_rows_var.set(str(snapshot.updated_rows))
         self.skipped_existing_rows_var.set(str(snapshot.skipped_existing_rows))
         self.failed_rows_var.set(str(snapshot.failed_rows))
 
@@ -1630,12 +1633,14 @@ class TranslatorGuiApp:
             return
 
         inserted_rows = getattr(summary, "inserted_rows", 0)
+        updated_rows = getattr(summary, "updated_rows", 0)
         failed_rows = getattr(summary, "failed_rows", 0)
         skipped_tables = getattr(summary, "skipped_tables", 0)
         should_continue = self._ask_yes_no(
             "Continue Operation",
             "Test table finished.\n"
             f"Inserted: {inserted_rows}\n"
+            f"Updated: {updated_rows}\n"
             f"Failed: {failed_rows}\n"
             f"Skipped tables: {skipped_tables}\n\n"
             "Continue with all tables?",
@@ -1689,6 +1694,7 @@ class TranslatorGuiApp:
         self.processed_rows_var.set("0")
         self.remaining_rows_var.set("0")
         self.inserted_rows_var.set("0")
+        self.updated_rows_var.set("0")
         self.skipped_existing_rows_var.set("0")
         self.failed_rows_var.set("0")
         self.operation_started_var.set("-")
