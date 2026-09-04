@@ -16,8 +16,8 @@ def create_translator(config: RuntimeConfig) -> Translator:
     if config.translator_provider == "libretranslate":
         if not config.libretranslate_url:
             raise ValueError(
-                "برای provider=libretranslate باید LIBRETRANSLATE_URL یا "
-                "--libretranslate-url تنظیم شود."
+                "When provider=libretranslate, configure LIBRETRANSLATE_URL "
+                "or pass --libretranslate-url."
             )
         return LibreTranslateTranslator(
             base_url=config.libretranslate_url,
@@ -26,4 +26,4 @@ def create_translator(config: RuntimeConfig) -> Translator:
             delay_seconds=config.request_delay_seconds,
         )
 
-    raise ValueError(f"Provider ترجمه پشتیبانی نمی‌شود: {config.translator_provider}")
+    raise ValueError(f"Unsupported translator provider: {config.translator_provider}")

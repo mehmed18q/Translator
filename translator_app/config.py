@@ -32,9 +32,9 @@ class SqlServerConnectionSettings:
             parts.append("Trusted_Connection=yes")
         else:
             if not self.username:
-                raise ValueError("نام کاربری SQL Server تنظیم نشده است.")
+                raise ValueError("SQL Server username is not configured.")
             if self.password is None:
-                raise ValueError("رمز عبور SQL Server تنظیم نشده است.")
+                raise ValueError("SQL Server password is not configured.")
             parts.extend([f"UID={self.username}", f"PWD={self.password}"])
 
         parts.append(f"Encrypt={'yes' if self.encrypt else 'no'}")

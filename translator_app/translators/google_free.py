@@ -48,7 +48,7 @@ class GoogleFreeTranslator(Translator):
             import requests
         except ImportError as exc:
             raise RuntimeError(
-                "پکیج requests نصب نیست. ابتدا `pip install -r requirements.txt` را اجرا کنید."
+                "requests is not installed. Run `pip install -r requirements.txt` first."
             ) from exc
 
         if self.delay_seconds > 0:
@@ -72,7 +72,7 @@ class GoogleFreeTranslator(Translator):
         payload = response.json()
 
         if not isinstance(payload, list) or not payload:
-            raise ValueError("پاسخ مترجم گوگل قابل خواندن نیست.")
+            raise ValueError("Google translator returned an unreadable response.")
 
         translated_parts = []
         for segment in payload[0]:
@@ -81,7 +81,7 @@ class GoogleFreeTranslator(Translator):
 
         result = "".join(translated_parts).strip()
         if not result:
-            raise ValueError("پاسخ مترجم گوگل خالی است.")
+            raise ValueError("Google translator returned an empty response.")
         return result
 
 

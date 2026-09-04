@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
 
-def configure_logging(log_dir: Path) -> tuple[logging.Logger, Path]:
+def configure_logging(
+    log_dir: Path,
+    *,
+    extra_handlers: Iterable[logging.Handler] = (),
+) -> tuple[logging.Logger, Path]:
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"translator_{datetime.now():%Y%m%d_%H%M%S}.log"
 
@@ -30,4 +35,8 @@ def configure_logging(log_dir: Path) -> tuple[logging.Logger, Path]:
 
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
+    for handler in extra_handlers:
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.INFO)
+        logger.addHandler(handler)
     return logger, log_file

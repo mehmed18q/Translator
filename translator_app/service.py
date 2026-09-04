@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from translator_app.config import RuntimeConfig
@@ -27,6 +28,32 @@ class TranslationSummary:
     failed_rows: int = 0
 
 
+@dataclass(frozen=True)
+class ProgressSnapshot:
+    phase: str
+    discovered_tables: int
+    eligible_tables: int
+    skipped_tables: int
+    pending_rows: int
+    processed_rows: int
+    remaining_rows: int
+    inserted_rows: int
+    skipped_existing_rows: int
+    failed_rows: int
+    percent: float
+    current_table: str | None = None
+    current_table_index: int = 0
+    total_tables: int = 0
+    table_pending_rows: int = 0
+    table_processed_rows: int = 0
+    table_remaining_rows: int = 0
+    table_percent: float = 0.0
+
+
+ProgressCallback = Callable[[ProgressSnapshot], None]
+CancelCallback = Callable[[], bool]
+
+
 class DatabaseTranslationService:
     def __init__(
         self,
@@ -35,19 +62,21 @@ class DatabaseTranslationService:
         repository: SqlServerLocalizationRepository,
         translator: Translator,
         logger: logging.Logger,
+        progress_callback: ProgressCallback | None = None,
+        cancel_callback: CancelCallback | None = None,
     ) -> None:
         self.schema_reader = schema_reader
         self.repository = repository
         self.translator = translator
         self.logger = logger
         self._translation_cache: dict[tuple[str, str, str], str] = {}
+        self.progress_callback = progress_callback
+        self.cancel_callback = cancel_callback
 
     def run(self, config: RuntimeConfig) -> TranslationSummary:
         self.logger.info(
-            "شروع: %s (%s) -> %s (%s) | mode=%s",
-            config.source_language.name_fa,
+            "Starting translation: source=%s target=%s | mode=%s",
             config.source_language.code,
-            config.target_language.name_fa,
             config.target_language.code,
             "dry-run" if config.dry_run else "execute",
         )
@@ -57,25 +86,28 @@ class DatabaseTranslationService:
             table_name=config.table_name,
         )
         summary = TranslationSummary(discovered_tables=len(tables))
+        self._emit_progress(summary, phase="discovered", total_tables=len(tables))
 
         if not tables:
-            self.logger.warning("هیچ جدول Localize/Localizes پیدا نشد.")
+            self.logger.warning("No translation tables were found.")
             return summary
 
         planned_tables = self._prepare_tables(tables, config, summary)
+        self._emit_progress(summary, phase="prepared", total_tables=len(tables))
         if not planned_tables:
-            self.logger.warning("هیچ جدول قابل ترجمه‌ای باقی نماند.")
+            self.logger.warning("No eligible translatable tables remained.")
             return summary
 
         if config.dry_run:
             self.logger.info(
-                "Dry-run تمام شد. برای insert واقعی برنامه را با --execute اجرا کنید."
+                "Dry-run finished. Run with --execute to insert translated rows."
             )
+            self._emit_progress(summary, phase="finished", total_tables=len(tables))
             return summary
 
         self._translate_and_insert(planned_tables, config, summary)
         self.logger.info(
-            "پایان: pending=%s processed=%s inserted=%s skipped_existing=%s failed=%s skipped_tables=%s",
+            "Finished: pending=%s processed=%s inserted=%s skipped_existing=%s failed=%s skipped_tables=%s",
             summary.pending_rows,
             summary.processed_rows,
             summary.inserted_rows,
@@ -83,6 +115,7 @@ class DatabaseTranslationService:
             summary.failed_rows,
             summary.skipped_tables,
         )
+        self._emit_progress(summary, phase="finished", total_tables=len(planned_tables))
         return summary
 
     def _prepare_tables(
@@ -94,6 +127,10 @@ class DatabaseTranslationService:
         planned_tables: list[tuple[TableTranslationPlan, int]] = []
 
         for table in tables:
+            if self._is_cancelled():
+                self.logger.warning("Operation stopped during preparation.")
+                break
+
             try:
                 plan = build_table_translation_plan(table)
                 pending_count = run_with_retry(
@@ -111,7 +148,7 @@ class DatabaseTranslationService:
             except Exception as exc:
                 summary.skipped_tables += 1
                 self.logger.exception(
-                    "جدول %s اسکیپ شد: %s",
+                    "Table skipped: %s | reason=%s",
                     table.display_name,
                     exc,
                 )
@@ -120,9 +157,16 @@ class DatabaseTranslationService:
             summary.eligible_tables += 1
             summary.pending_rows += pending_count
             planned_tables.append((plan, pending_count))
+            self._emit_progress(
+                summary,
+                phase="prepare",
+                current_table=table.display_name,
+                current_table_index=len(planned_tables),
+                total_tables=len(tables),
+            )
 
             self.logger.info(
-                "جدول آماده: %s | base=%s | fk=%s | text_columns=%s | pending=%s",
+                "Table ready: %s | base=%s | fk=%s | translatable_columns=%s | pending=%s",
                 table.display_name,
                 table.referenced_table_name or "-",
                 table.entity_key_column_name,
@@ -131,7 +175,7 @@ class DatabaseTranslationService:
             )
 
         self.logger.info(
-            "خلاصه آماده‌سازی: discovered=%s eligible=%s skipped=%s pending_rows=%s",
+            "Preparation summary: discovered=%s eligible=%s skipped=%s pending_rows=%s",
             summary.discovered_tables,
             summary.eligible_tables,
             summary.skipped_tables,
@@ -146,7 +190,20 @@ class DatabaseTranslationService:
         summary: TranslationSummary,
     ) -> None:
         for table_index, (plan, pending_count) in enumerate(planned_tables, start=1):
+            if self._is_cancelled():
+                self.logger.warning("Operation stopped before the next table.")
+                return
+
             if pending_count == 0:
+                self._emit_progress(
+                    summary,
+                    phase="table-finished",
+                    current_table=plan.table.display_name,
+                    current_table_index=table_index,
+                    total_tables=len(planned_tables),
+                    table_pending_rows=0,
+                    table_processed_rows=0,
+                )
                 continue
 
             table_processed = 0
@@ -159,6 +216,10 @@ class DatabaseTranslationService:
                 target_language_id=config.target_language.id,
                 batch_size=config.batch_size,
             ):
+                if self._is_cancelled():
+                    self.logger.warning("Operation stopped by user request.")
+                    return
+
                 entity_value = source_row.get(table.entity_key_column_name or "")
                 row_status = "failed"
                 try:
@@ -200,7 +261,7 @@ class DatabaseTranslationService:
                     table_failed += 1
                     row_status = "failed"
                     self.logger.exception(
-                        "خطا در رکورد %s.%s=%r: %s",
+                        "Row failed: %s.%s=%r | reason=%s",
                         table.display_name,
                         table.entity_key_column_name,
                         entity_value,
@@ -211,8 +272,17 @@ class DatabaseTranslationService:
                     table_processed += 1
 
                 if table_processed % config.progress_every == 0:
+                    self._emit_progress(
+                        summary,
+                        phase="running",
+                        current_table=table.display_name,
+                        current_table_index=table_index,
+                        total_tables=len(planned_tables),
+                        table_pending_rows=pending_count,
+                        table_processed_rows=table_processed,
+                    )
                     self.logger.info(
-                        "%s | جدول %s/%s %s | %s.%s=%r | status=%s | inserted=%s skipped_existing=%s failed=%s",
+                        "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s skipped_existing=%s failed=%s",
                         format_progress(summary.processed_rows, summary.pending_rows),
                         table_index,
                         len(planned_tables),
@@ -227,10 +297,19 @@ class DatabaseTranslationService:
                     )
 
             self.logger.info(
-                "اتمام جدول %s | processed=%s failed=%s",
+                "Table finished: %s | processed=%s failed=%s",
                 table.display_name,
                 table_processed,
                 table_failed,
+            )
+            self._emit_progress(
+                summary,
+                phase="table-finished",
+                current_table=table.display_name,
+                current_table_index=table_index,
+                total_tables=len(planned_tables),
+                table_pending_rows=pending_count,
+                table_processed_rows=table_processed,
             )
 
     def _translate_row(
@@ -274,6 +353,51 @@ class DatabaseTranslationService:
 
         return translated_values
 
+    def _is_cancelled(self) -> bool:
+        return bool(self.cancel_callback and self.cancel_callback())
+
+    def _emit_progress(
+        self,
+        summary: TranslationSummary,
+        *,
+        phase: str,
+        current_table: str | None = None,
+        current_table_index: int = 0,
+        total_tables: int = 0,
+        table_pending_rows: int = 0,
+        table_processed_rows: int = 0,
+    ) -> None:
+        if not self.progress_callback:
+            return
+
+        remaining_rows = max(summary.pending_rows - summary.processed_rows, 0)
+        table_remaining_rows = max(table_pending_rows - table_processed_rows, 0)
+        snapshot = ProgressSnapshot(
+            phase=phase,
+            discovered_tables=summary.discovered_tables,
+            eligible_tables=summary.eligible_tables,
+            skipped_tables=summary.skipped_tables,
+            pending_rows=summary.pending_rows,
+            processed_rows=summary.processed_rows,
+            remaining_rows=remaining_rows,
+            inserted_rows=summary.inserted_rows,
+            skipped_existing_rows=summary.skipped_existing_rows,
+            failed_rows=summary.failed_rows,
+            percent=calculate_percent(summary.processed_rows, summary.pending_rows),
+            current_table=current_table,
+            current_table_index=current_table_index,
+            total_tables=total_tables,
+            table_pending_rows=table_pending_rows,
+            table_processed_rows=table_processed_rows,
+            table_remaining_rows=table_remaining_rows,
+            table_percent=calculate_percent(table_processed_rows, table_pending_rows),
+        )
+
+        try:
+            self.progress_callback(snapshot)
+        except Exception:
+            self.logger.debug("Progress callback failed", exc_info=True)
+
 
 def format_progress(done: int, total: int, *, width: int = 24) -> str:
     if total <= 0:
@@ -282,3 +406,9 @@ def format_progress(done: int, total: int, *, width: int = 24) -> str:
     filled = int(round(width * percent))
     bar = "#" * filled + "-" * (width - filled)
     return f"[{bar}] {percent * 100:6.2f}%"
+
+
+def calculate_percent(done: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return min(max(done / total, 0.0), 1.0) * 100

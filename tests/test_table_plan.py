@@ -69,6 +69,24 @@ class TablePlanTests(unittest.TestCase):
         self.assertEqual(entity_key, "SiteMenuId")
         self.assertEqual(referenced_table, "SiteMenu")
 
+    def test_infers_resource_key_for_resource_table(self) -> None:
+        columns = (
+            column("Id", "int", is_identity=True, is_primary_key=True),
+            column("LanguageId", "int"),
+            column("Key", "nvarchar"),
+            column("Value", "nvarchar"),
+        )
+
+        entity_key, referenced_table = find_entity_key_column(
+            schema_name="dbo",
+            table_name="Resource",
+            columns=columns,
+            foreign_keys=(),
+        )
+
+        self.assertEqual(entity_key, "Key")
+        self.assertEqual(referenced_table, "Resource")
+
     def test_builds_insert_plan_for_common_identity_table(self) -> None:
         table = LocalizeTable(
             schema_name="dbo",
@@ -95,6 +113,89 @@ class TablePlanTests(unittest.TestCase):
             [item.column.name for item in plan.insert_columns],
             ["SiteMenuId", "LanguageId", "Title", "Description", "SortOrder"],
         )
+
+    def test_only_allow_listed_text_columns_are_translated(self) -> None:
+        table = LocalizeTable(
+            schema_name="dbo",
+            table_name="SampleLocalize",
+            object_id=2,
+            columns=(
+                column("Id", "int", is_identity=True, is_primary_key=True),
+                column("SampleId", "int"),
+                column("LanguageId", "int"),
+                column("Title", "nvarchar"),
+                column("InternalMemo", "nvarchar"),
+            ),
+            foreign_keys=(),
+            language_column_name="LanguageId",
+            entity_key_column_name="SampleId",
+            referenced_table_name="Sample",
+        )
+
+        plan = build_table_translation_plan(table)
+        insert_modes = {
+            item.column.name: item.mode
+            for item in plan.insert_columns
+        }
+
+        self.assertEqual(plan.text_column_names, ("Title",))
+        self.assertEqual(insert_modes["Title"], "translated_text")
+        self.assertEqual(insert_modes["InternalMemo"], "copy_from_source")
+
+    def test_resource_table_translates_value_by_key(self) -> None:
+        table = LocalizeTable(
+            schema_name="dbo",
+            table_name="Resource",
+            object_id=3,
+            columns=(
+                column("Id", "int", is_identity=True, is_primary_key=True),
+                column("LanguageId", "int"),
+                column("Key", "nvarchar"),
+                column("Value", "nvarchar"),
+            ),
+            foreign_keys=(),
+            language_column_name="LanguageId",
+            entity_key_column_name="Key",
+            referenced_table_name="Resource",
+        )
+
+        plan = build_table_translation_plan(table)
+        insert_modes = {
+            item.column.name: item.mode
+            for item in plan.insert_columns
+        }
+
+        self.assertEqual(plan.text_column_names, ("Value",))
+        self.assertEqual(insert_modes["LanguageId"], "target_language")
+        self.assertEqual(insert_modes["Key"], "copy_from_source")
+        self.assertEqual(insert_modes["Value"], "translated_text")
+
+    def test_value_is_not_translated_in_regular_localize_tables(self) -> None:
+        table = LocalizeTable(
+            schema_name="dbo",
+            table_name="SampleLocalize",
+            object_id=4,
+            columns=(
+                column("Id", "int", is_identity=True, is_primary_key=True),
+                column("SampleId", "int"),
+                column("LanguageId", "int"),
+                column("Title", "nvarchar"),
+                column("Value", "nvarchar"),
+            ),
+            foreign_keys=(),
+            language_column_name="LanguageId",
+            entity_key_column_name="SampleId",
+            referenced_table_name="Sample",
+        )
+
+        plan = build_table_translation_plan(table)
+        insert_modes = {
+            item.column.name: item.mode
+            for item in plan.insert_columns
+        }
+
+        self.assertEqual(plan.text_column_names, ("Title",))
+        self.assertEqual(insert_modes["Value"], "copy_from_source")
 
 
 if __name__ == "__main__":

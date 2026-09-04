@@ -1,6 +1,6 @@
 # SQL Server Localize Translator
 
-این ابزار جدول‌هایی را که نامشان به `Localize` یا `Localizes` ختم می‌شود از طریق `sys.tables` و `sys.columns` پیدا می‌کند، رکوردهای زبان مبدا را می‌خواند و اگر برای همان شناسه جدول اصلی و زبان مقصد رکوردی وجود نداشته باشد، یک رکورد ترجمه‌شده insert می‌کند.
+این ابزار جدول‌هایی را که نامشان به `Localize` یا `Localizes` ختم می‌شود و همچنین جدول خاص `dbo.Resource` را از طریق `sys.tables` و `sys.columns` پیدا می‌کند، رکوردهای زبان مبدا را می‌خواند و اگر برای همان شناسه جدول اصلی یا همان key زبان مقصد رکوردی وجود نداشته باشد، یک رکورد ترجمه‌شده insert می‌کند.
 
 ## فرض‌های اصلی
 
@@ -13,8 +13,13 @@
   - `5`: چینی (`zh`)
   - `6`: روسی (`ru`)
 - ارتباط جدول لوکالایز با جدول اصلی ترجیحا از foreign key خوانده می‌شود. اگر FK تعریف نشده باشد، ابزار از نام جدول الگو می‌گیرد؛ مثلا برای `SiteMenuLocalize` ستون `SiteMenuId` را جست‌وجو می‌کند.
-- ستون‌های متنی شامل `nvarchar`, `varchar`, `nchar`, `char`, `text`, `ntext` ترجمه می‌شوند.
+- جدول `dbo.Resource` یک special-case است: ستون `[Key]` به عنوان کلید تطبیق و ستون `Value` به عنوان متن قابل ترجمه استفاده می‌شود.
+- ترجمه فقط روی ستون‌هایی انجام می‌شود که هم نوع متنی داشته باشند و هم نامشان در allow-list فایل `translator_app/translatable_columns.py` باشد.
 - ستون‌های identity، computed و rowversion در insert وارد نمی‌شوند.
+
+## ستون‌های قابل ترجمه
+
+لیست ستون‌های قابل ترجمه در `translator_app/translatable_columns.py` نگهداری می‌شود. اگر یک ستون متنی داخل جدول لوکالایز باشد اما نامش در این لیست نباشد، ترجمه نمی‌شود و مقدارش در insert از رکورد مبدا کپی می‌شود. استثنا: در جدول `dbo.Resource` ستون `Value` ترجمه می‌شود.
 
 ## نصب
 
@@ -23,7 +28,21 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
+روی Windows:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\pip install -r requirements.txt
+```
+
 روی لینوکس باید ODBC Driver 18 for SQL Server هم نصب باشد.
+پکیج `pyodbc` فقط wrapper پایتون است؛ خود درایور SQL Server با pip نصب نمی‌شود.
+
+روی Windows باید Microsoft ODBC Driver 18 for SQL Server نصب باشد:
+
+```powershell
+winget install Microsoft.msodbcsql.18
+```
 
 ## تنظیم اتصال
 
@@ -40,6 +59,39 @@ export SQLSERVER_CONNECTION_STRING='DRIVER={ODBC Driver 18 for SQL Server};SERVE
 ```bash
 .venv/bin/python main.py --source-language-id 1 --target-language-id 2
 ```
+
+## اجرای GUI
+
+برای اجرای نسخه گرافیکی، الان کافی است برنامه را بدون آرگومان اجرا کنید:
+
+```bash
+.venv/bin/python main.py
+```
+
+اجرای صریح GUI هم پشتیبانی می‌شود:
+
+```bash
+.venv/bin/python main.py --gui
+```
+
+روی Windows:
+
+```powershell
+.\.venv\Scripts\python main.py
+.\.venv\Scripts\python main.py --gui
+```
+
+روی Windows معمولاً `tkinter` همراه Python نصب است. اگر روی لینوکس اجرا کردید و خطای `No module named 'tkinter'` گرفتید:
+
+```bash
+sudo apt install python3-tk
+```
+
+GUI سه تب دارد:
+
+- `Connection`: تنظیم و ذخیره اتصال SQL Server، provider ترجمه و آدرس LibreTranslate
+- `Operation`: انتخاب زبان مبدا/مقصد، اجرای همه جدول‌ها، اجرای یک جدول، یا تست تک جدول و سؤال برای ادامه
+- `Logs`: نمایش زنده لاگ‌ها؛ فایل لاگ هر اجرا جداگانه در مسیر `LOG_DIR` ذخیره می‌شود
 
 ## اجرای واقعی
 
@@ -71,7 +123,9 @@ export SQLSERVER_CONNECTION_STRING='DRIVER={ODBC Driver 18 for SQL Server};SERVE
 
 ## مترجم رایگان
 
-Provider پیش‌فرض `google-free` است. این provider از endpoint عمومی و بدون API key گوگل استفاده می‌کند، اما قرارداد رسمی Google Cloud نیست و ممکن است rate limit یا تغییر رفتار داشته باشد.
+در CLI اگر provider تنظیم نکنید، `google-free` استفاده می‌شود. در GUI و `.env.example` مقدار پیش‌فرض روی `libretranslate` گذاشته شده تا بتوانید آدرس سرویس LibreTranslate خودتان را تنظیم کنید.
+
+Provider `google-free` از endpoint عمومی و بدون API key گوگل استفاده می‌کند، اما قرارداد رسمی Google Cloud نیست و ممکن است rate limit یا تغییر رفتار داشته باشد.
 
 اگر ترجمه کاملا رایگان، قابل کنترل و پایدارتر می‌خواهید، LibreTranslate را self-host کنید و اجرا را این‌طور انجام دهید:
 

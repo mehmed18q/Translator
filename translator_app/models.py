@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from translator_app.special_tables import is_special_translatable_column
+from translator_app.translatable_columns import is_translatable_column
+
 
 TEXT_SQL_TYPES = {"nvarchar", "varchar", "nchar", "char", "text", "ntext"}
 ROWVERSION_SQL_TYPES = {"timestamp", "rowversion"}
@@ -72,6 +75,14 @@ class LocalizeTable:
             for column in self.columns
             if column.is_text
             and not column.is_computed
+            and (
+                is_translatable_column(column.name)
+                or is_special_translatable_column(
+                    self.schema_name,
+                    self.table_name,
+                    column.name,
+                )
+            )
             and column.name.casefold() not in excluded
         )
 
@@ -109,13 +120,13 @@ def remove_localize_suffix(table_name: str) -> str:
 
 def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
     if not table.language_column_name:
-        raise ValueError("ستون LanguageId پیدا نشد.")
+        raise ValueError("LanguageId column was not found.")
     if not table.entity_key_column_name:
-        raise ValueError("ستون شناسه خارجی جدول اصلی پیدا نشد.")
+        raise ValueError("Main entity foreign key column was not found.")
 
     text_columns = table.text_columns()
     if not text_columns:
-        raise ValueError("ستون متنی قابل ترجمه پیدا نشد.")
+        raise ValueError("No allow-listed translatable text column was found.")
 
     language_key = table.language_column_name.casefold()
     entity_key = table.entity_key_column_name.casefold()
@@ -150,7 +161,7 @@ def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
                 generated_columns.add(column.name.casefold())
                 continue
             raise ValueError(
-                "کلید اصلی غیر identity و بدون default پشتیبانی نمی‌شود: "
+                "Unsupported non-identity primary key without a default value: "
                 f"{column.name}"
             )
 

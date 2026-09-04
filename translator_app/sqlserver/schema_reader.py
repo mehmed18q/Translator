@@ -9,6 +9,11 @@ from translator_app.models import (
     LocalizeTable,
     remove_localize_suffix,
 )
+from translator_app.special_tables import (
+    RESOURCE_KEY_COLUMN_NAME,
+    RESOURCE_TABLE_NAME,
+    is_resource_table,
+)
 
 
 class SqlServerSchemaReader:
@@ -47,6 +52,7 @@ class SqlServerSchemaReader:
             foreign_keys = tuple(foreign_keys_by_object.get(object_id, ()))
             language_column = find_column_name(columns, "LanguageId")
             entity_key_column, referenced_table = find_entity_key_column(
+                schema_name=first_row.schema_name,
                 table_name=first_row.table_name,
                 columns=columns,
                 foreign_keys=foreign_keys,
@@ -99,7 +105,11 @@ LEFT JOIN (
     AND pk.column_id = c.column_id
 WHERE
     t.is_ms_shipped = 0
-    AND (LOWER(t.name) LIKE '%localize' OR LOWER(t.name) LIKE '%localizes')
+    AND (
+        LOWER(t.name) LIKE '%localize'
+        OR LOWER(t.name) LIKE '%localizes'
+        OR (LOWER(s.name) = 'dbo' AND LOWER(t.name) = 'resource')
+    )
 """
         params: list[object] = []
         if schema_name:
@@ -147,7 +157,11 @@ INNER JOIN sys.columns AS rc
     AND rc.column_id = fkc.referenced_column_id
 WHERE
     pt.is_ms_shipped = 0
-    AND (LOWER(pt.name) LIKE '%localize' OR LOWER(pt.name) LIKE '%localizes')
+    AND (
+        LOWER(pt.name) LIKE '%localize'
+        OR LOWER(pt.name) LIKE '%localizes'
+        OR (LOWER(ps.name) = 'dbo' AND LOWER(pt.name) = 'resource')
+    )
 """
         params: list[object] = []
         if schema_name:
@@ -183,10 +197,14 @@ def find_column_name(columns: Iterable[ColumnInfo], expected_name: str) -> str |
 
 def find_entity_key_column(
     *,
+    schema_name: str = "dbo",
     table_name: str,
     columns: tuple[ColumnInfo, ...],
     foreign_keys: tuple[ForeignKeyInfo, ...],
 ) -> tuple[str | None, str | None]:
+    if is_resource_table(schema_name, table_name):
+        return find_column_name(columns, RESOURCE_KEY_COLUMN_NAME), RESOURCE_TABLE_NAME
+
     base_table_name = remove_localize_suffix(table_name)
     fk_groups: dict[str, list[ForeignKeyInfo]] = defaultdict(list)
     for foreign_key in foreign_keys:

@@ -88,11 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-encrypt",
         action="store_true",
+        default=parse_env_bool("SQLSERVER_NO_ENCRYPT", False),
         help="Set Encrypt=no in the SQL Server connection string.",
     )
     parser.add_argument(
         "--no-trust-server-certificate",
         action="store_true",
+        default=not parse_env_bool("SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
         help="Set TrustServerCertificate=no in the SQL Server connection string.",
     )
     parser.add_argument("--source-language-id", type=int)
@@ -377,6 +379,13 @@ def prompt_yes_no(prompt: str, *, default: bool) -> bool:
         if value in {"n", "no", "خیر", "نه"}:
             return False
         print("لطفا y یا n وارد کنید.")
+
+
+def parse_env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().casefold() in {"1", "true", "yes", "y"}
 
 
 def load_dotenv(path: Path) -> None:

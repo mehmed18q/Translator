@@ -24,7 +24,7 @@ class LibreTranslateTranslator(Translator):
             import requests
         except ImportError as exc:
             raise RuntimeError(
-                "پکیج requests نصب نیست. ابتدا `pip install -r requirements.txt` را اجرا کنید."
+                "requests is not installed. Run `pip install -r requirements.txt` first."
             ) from exc
 
         if not text or not text.strip():
@@ -51,5 +51,5 @@ class LibreTranslateTranslator(Translator):
         data = response.json()
         translated_text = data.get("translatedText")
         if not translated_text:
-            raise ValueError("پاسخ LibreTranslate خالی است.")
+            raise ValueError("LibreTranslate returned an empty response.")
         return str(translated_text)

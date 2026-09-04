@@ -152,10 +152,10 @@ WHERE
             return translated_values[column_name]
         if column_plan.mode == "generated_uuid":
             return str(uuid4())
-        raise ValueError(f"Insert mode نامعتبر است: {column_plan.mode}")
+        raise ValueError(f"Invalid insert mode: {column_plan.mode}")
 
 
 def required(value: str | None) -> str:
     if value is None:
-        raise ValueError("metadata جدول کامل نیست.")
+        raise ValueError("Table metadata is incomplete.")
     return value
