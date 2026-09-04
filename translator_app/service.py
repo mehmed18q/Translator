@@ -181,7 +181,7 @@ class DatabaseTranslationService:
                 "Table ready: %s | base=%s | fk=%s | translatable_columns=%s | pending=%s",
                 table.display_name,
                 table.referenced_table_name or "-",
-                table.entity_key_column_name,
+                ",".join(table.key_column_names),
                 ", ".join(plan.text_column_names),
                 pending_count,
             )
@@ -228,7 +228,7 @@ class DatabaseTranslationService:
                 table_index,
                 len(planned_tables),
                 pending_count,
-                table.entity_key_column_name,
+                ",".join(table.key_column_names),
             )
             try:
                 for source_row in self.repository.iter_pending_source_rows(
@@ -241,7 +241,8 @@ class DatabaseTranslationService:
                         self.logger.warning("Operation stopped by user request.")
                         return
 
-                    entity_value = source_row.get(table.entity_key_column_name or "")
+                    entity_key_values = self._entity_key_values(plan, source_row)
+                    entity_value = format_entity_key_values(entity_key_values)
                     row_status = "failed"
                     try:
                         target_exists = bool(source_row.get(TARGET_EXISTS_COLUMN_NAME))
@@ -260,7 +261,7 @@ class DatabaseTranslationService:
                                 ),
                                 operation_name=(
                                     f"insert {table.display_name} "
-                                    f"{table.entity_key_column_name}={entity_value}"
+                                    f"{entity_value}"
                                 ),
                                 attempts=config.retry.attempts,
                                 initial_delay_seconds=config.retry.initial_delay_seconds,
@@ -284,13 +285,13 @@ class DatabaseTranslationService:
                                 updated_columns = run_with_retry(
                                     lambda: self.repository.update_translation_columns(
                                         plan,
-                                        entity_key_value=entity_value,
+                                        entity_key_values=entity_key_values,
                                         translated_values=translated_values,
                                         target_language_id=config.target_language.id,
                                     ),
                                     operation_name=(
                                         f"update {table.display_name} "
-                                        f"{table.entity_key_column_name}={entity_value}"
+                                        f"{entity_value}"
                                     ),
                                     attempts=config.retry.attempts,
                                     initial_delay_seconds=config.retry.initial_delay_seconds,
@@ -316,9 +317,8 @@ class DatabaseTranslationService:
                         table_failed += 1
                         row_status = "failed"
                         self.logger.exception(
-                            "Row failed: %s.%s=%r | reason=%s",
+                            "Row failed: %s | %s | reason=%s",
                             table.display_name,
-                            table.entity_key_column_name,
                             entity_value,
                             exc,
                         )
@@ -337,13 +337,13 @@ class DatabaseTranslationService:
                             table_processed_rows=table_processed,
                         )
                         self.logger.info(
-                            "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s updated=%s skipped_existing=%s failed=%s",
+                            "%s | table %s/%s %s | %s | %s | status=%s | inserted=%s updated=%s skipped_existing=%s failed=%s",
                             format_progress(summary.processed_rows, summary.pending_rows),
                             table_index,
                             len(planned_tables),
                             format_progress(table_processed, pending_count),
                             table.display_name,
-                            table.entity_key_column_name,
+                            ",".join(table.key_column_names),
                             entity_value,
                             row_status,
                             summary.inserted_rows,
@@ -452,6 +452,16 @@ class DatabaseTranslationService:
                 missing_columns.append(column_name)
         return tuple(missing_columns)
 
+    def _entity_key_values(
+        self,
+        plan: TableTranslationPlan,
+        source_row: dict[str, object],
+    ) -> dict[str, object]:
+        return {
+            column_name: source_row.get(column_name)
+            for column_name in plan.table.key_column_names
+        }
+
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())
 
@@ -524,3 +534,10 @@ def detect_text_format(column_name: str, text: str) -> str:
 
 def has_text_value(value: object) -> bool:
     return value is not None and bool(str(value).strip())
+
+
+def format_entity_key_values(values: dict[str, object]) -> str:
+    return ", ".join(
+        f"{column_name}={value!r}"
+        for column_name, value in values.items()
+    )

@@ -12,7 +12,11 @@ from translator_app.models import (
 from translator_app.special_tables import (
     RESOURCE_KEY_COLUMN_NAME,
     RESOURCE_TABLE_NAME,
+    SYSTEM_MESSAGES_KEY_COLUMN_NAME,
+    SYSTEM_MESSAGES_STATE_COLUMN_NAME,
+    SYSTEM_MESSAGES_TABLE_NAME,
     is_resource_table,
+    is_system_messages_table,
 )
 
 LANGUAGE_COLUMN_CANDIDATES = ("LanguageId", "LangId")
@@ -59,6 +63,12 @@ class SqlServerSchemaReader:
                 columns=columns,
                 foreign_keys=foreign_keys,
             )
+            entity_key_columns = find_entity_key_column_names(
+                schema_name=first_row.schema_name,
+                table_name=first_row.table_name,
+                columns=columns,
+                entity_key_column=entity_key_column,
+            )
 
             tables.append(
                 LocalizeTable(
@@ -70,6 +80,7 @@ class SqlServerSchemaReader:
                     language_column_name=language_column,
                     entity_key_column_name=entity_key_column,
                     referenced_table_name=referenced_table,
+                    entity_key_column_names=entity_key_columns,
                 )
             )
 
@@ -111,6 +122,7 @@ WHERE
         LOWER(t.name) LIKE '%localize'
         OR LOWER(t.name) LIKE '%localizes'
         OR (LOWER(s.name) = 'dbo' AND LOWER(t.name) = 'resource')
+        OR (LOWER(s.name) = 'dbo' AND LOWER(t.name) = 'systemmessages')
     )
 """
         params: list[object] = []
@@ -163,6 +175,7 @@ WHERE
         LOWER(pt.name) LIKE '%localize'
         OR LOWER(pt.name) LIKE '%localizes'
         OR (LOWER(ps.name) = 'dbo' AND LOWER(pt.name) = 'resource')
+        OR (LOWER(ps.name) = 'dbo' AND LOWER(pt.name) = 'systemmessages')
     )
 """
         params: list[object] = []
@@ -222,6 +235,11 @@ def find_entity_key_column(
 ) -> tuple[str | None, str | None]:
     if is_resource_table(schema_name, table_name):
         return find_column_name(columns, RESOURCE_KEY_COLUMN_NAME), RESOURCE_TABLE_NAME
+    if is_system_messages_table(schema_name, table_name):
+        return (
+            find_column_name(columns, SYSTEM_MESSAGES_KEY_COLUMN_NAME),
+            SYSTEM_MESSAGES_TABLE_NAME,
+        )
 
     base_table_name = remove_localize_suffix(table_name)
     fk_groups: dict[str, list[ForeignKeyInfo]] = defaultdict(list)
@@ -269,3 +287,27 @@ def find_entity_key_column(
             return column.name, base_table_name
 
     return None, None
+
+
+def find_entity_key_column_names(
+    *,
+    schema_name: str,
+    table_name: str,
+    columns: tuple[ColumnInfo, ...],
+    entity_key_column: str | None,
+) -> tuple[str, ...]:
+    if is_system_messages_table(schema_name, table_name):
+        key_columns = tuple(
+            column_name
+            for column_name in (
+                find_column_name(columns, SYSTEM_MESSAGES_STATE_COLUMN_NAME),
+                find_column_name(columns, SYSTEM_MESSAGES_KEY_COLUMN_NAME),
+            )
+            if column_name
+        )
+        if key_columns:
+            return key_columns
+
+    if entity_key_column:
+        return (entity_key_column,)
+    return ()

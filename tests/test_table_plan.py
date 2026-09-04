@@ -13,6 +13,7 @@ from translator_app.models import (
 )
 from translator_app.sqlserver.schema_reader import (
     find_entity_key_column,
+    find_entity_key_column_names,
     find_language_column_name,
 )
 
@@ -249,6 +250,63 @@ class TablePlanTests(unittest.TestCase):
         self.assertEqual(plan.text_column_names, ("Value",))
         self.assertEqual(insert_modes["LanguageId"], "target_language")
         self.assertEqual(insert_modes["Key"], "copy_from_source")
+        self.assertEqual(insert_modes["Value"], "translated_text")
+
+    def test_system_messages_uses_state_and_message_key(self) -> None:
+        columns = (
+            column("SystemMessageStateId", "int"),
+            column("LanguageId", "int"),
+            column("MessageKey", "nvarchar"),
+            column("Value", "nvarchar"),
+        )
+
+        entity_key, referenced_table = find_entity_key_column(
+            schema_name="dbo",
+            table_name="SystemMessages",
+            columns=columns,
+            foreign_keys=(),
+        )
+        entity_key_columns = find_entity_key_column_names(
+            schema_name="dbo",
+            table_name="SystemMessages",
+            columns=columns,
+            entity_key_column=entity_key,
+        )
+
+        self.assertEqual(entity_key, "MessageKey")
+        self.assertEqual(referenced_table, "SystemMessages")
+        self.assertEqual(entity_key_columns, ("SystemMessageStateId", "MessageKey"))
+
+    def test_system_messages_translates_value_only(self) -> None:
+        table = LocalizeTable(
+            schema_name="dbo",
+            table_name="SystemMessages",
+            object_id=6,
+            columns=(
+                column("SystemMessageStateId", "int"),
+                column("LanguageId", "int"),
+                column("MessageKey", "nvarchar"),
+                column("Value", "nvarchar"),
+            ),
+            foreign_keys=(),
+            language_column_name="LanguageId",
+            entity_key_column_name="MessageKey",
+            referenced_table_name="SystemMessages",
+            entity_key_column_names=("SystemMessageStateId", "MessageKey"),
+        )
+
+        plan = build_table_translation_plan(table)
+        insert_modes = {
+            item.column.name: item.mode
+            for item in plan.insert_columns
+        }
+
+        self.assertEqual(plan.text_column_names, ("Value",))
+        self.assertIn("SystemMessageStateId", plan.source_column_names)
+        self.assertIn("MessageKey", plan.source_column_names)
+        self.assertEqual(insert_modes["LanguageId"], "target_language")
+        self.assertEqual(insert_modes["SystemMessageStateId"], "copy_from_source")
+        self.assertEqual(insert_modes["MessageKey"], "copy_from_source")
         self.assertEqual(insert_modes["Value"], "translated_text")
 
     def test_value_is_not_translated_in_regular_localize_tables(self) -> None:

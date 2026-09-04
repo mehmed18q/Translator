@@ -165,6 +165,67 @@ class RepositoryTests(unittest.TestCase):
         )
         self.assertEqual(connection.cursors[0].params, ("Translated", 7, 2))
 
+    def test_system_messages_pending_rows_match_state_and_message_key(self) -> None:
+        connection = FakeConnection(
+            batches=[
+                [(3, "Welcome", "خوش آمدید", 1, None)],
+                [],
+            ],
+            description=[
+                ("SystemMessageStateId",),
+                ("MessageKey",),
+                ("Value",),
+                (TARGET_EXISTS_COLUMN_NAME,),
+                (target_value_column_name("Value"),),
+            ],
+        )
+        repository = SqlServerLocalizationRepository(connection)
+        plan = build_table_translation_plan(build_system_messages_table())
+
+        rows = list(
+            repository.iter_pending_source_rows(
+                plan,
+                source_language_id=1,
+                target_language_id=2,
+                batch_size=10,
+            )
+        )
+
+        self.assertEqual(rows[0]["SystemMessageStateId"], 3)
+        self.assertEqual(rows[0]["MessageKey"], "Welcome")
+        self.assertIn(
+            "dst.[SystemMessageStateId] = src.[SystemMessageStateId]",
+            connection.cursors[0].sql,
+        )
+        self.assertIn(
+            "dst.[MessageKey] = src.[MessageKey]",
+            connection.cursors[0].sql,
+        )
+        self.assertIn(
+            "ORDER BY src.[SystemMessageStateId], src.[MessageKey]",
+            connection.cursors[0].sql,
+        )
+
+    def test_system_messages_update_matches_state_and_message_key(self) -> None:
+        connection = FakeConnection(batches=[[]])
+        repository = SqlServerLocalizationRepository(connection)
+        plan = build_table_translation_plan(build_system_messages_table())
+
+        repository.update_translation_columns(
+            plan,
+            entity_key_values={
+                "SystemMessageStateId": 3,
+                "MessageKey": "Welcome",
+            },
+            translated_values={"Value": "Welcome"},
+            target_language_id=2,
+        )
+
+        self.assertIn("UPDATE [dbo].[SystemMessages]", connection.cursors[0].sql)
+        self.assertIn("[SystemMessageStateId] = ?", connection.cursors[0].sql)
+        self.assertIn("[MessageKey] = ?", connection.cursors[0].sql)
+        self.assertEqual(connection.cursors[0].params, ("Welcome", 3, "Welcome", 2))
+
 
 def build_table() -> LocalizeTable:
     return LocalizeTable(
@@ -200,6 +261,25 @@ def build_table_with_description() -> LocalizeTable:
         language_column_name="LanguageId",
         entity_key_column_name="SampleId",
         referenced_table_name="Sample",
+    )
+
+
+def build_system_messages_table() -> LocalizeTable:
+    return LocalizeTable(
+        schema_name="dbo",
+        table_name="SystemMessages",
+        object_id=2,
+        columns=(
+            column("SystemMessageStateId", "int"),
+            column("LanguageId", "int"),
+            column("MessageKey", "nvarchar"),
+            column("Value", "nvarchar"),
+        ),
+        foreign_keys=(),
+        language_column_name="LanguageId",
+        entity_key_column_name="MessageKey",
+        referenced_table_name="SystemMessages",
+        entity_key_column_names=("SystemMessageStateId", "MessageKey"),
     )
 
 

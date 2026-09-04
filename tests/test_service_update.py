@@ -73,13 +73,15 @@ class FakeRepository:
         self,
         plan: object,
         *,
-        entity_key_value: object,
+        entity_key_value: object | None = None,
+        entity_key_values: dict[str, object] | None = None,
         translated_values: dict[str, object],
         target_language_id: int,
     ) -> int:
         self.updates.append(
             {
                 "entity_key_value": entity_key_value,
+                "entity_key_values": entity_key_values,
                 "translated_values": translated_values,
                 "target_language_id": target_language_id,
             }
@@ -126,7 +128,8 @@ class ServiceUpdateTests(unittest.TestCase):
             repository.updates,
             [
                 {
-                    "entity_key_value": 1,
+                    "entity_key_value": None,
+                    "entity_key_values": {"SampleId": 1},
                     "translated_values": {"Description": "en:توضیح"},
                     "target_language_id": 2,
                 }

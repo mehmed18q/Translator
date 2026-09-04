@@ -54,6 +54,7 @@ class LocalizeTable:
     language_column_name: str | None
     entity_key_column_name: str | None
     referenced_table_name: str | None
+    entity_key_column_names: tuple[str, ...] = ()
 
     @property
     def display_name(self) -> str:
@@ -65,10 +66,18 @@ class LocalizeTable:
                 return column
         raise KeyError(column_name)
 
+    @property
+    def key_column_names(self) -> tuple[str, ...]:
+        if self.entity_key_column_names:
+            return self.entity_key_column_names
+        if self.entity_key_column_name:
+            return (self.entity_key_column_name,)
+        return ()
+
     def text_columns(self) -> tuple[ColumnInfo, ...]:
         excluded = {
             (self.language_column_name or "").casefold(),
-            (self.entity_key_column_name or "").casefold(),
+            *(column_name.casefold() for column_name in self.key_column_names),
         }
         return tuple(
             column
@@ -121,7 +130,7 @@ def remove_localize_suffix(table_name: str) -> str:
 def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
     if not table.language_column_name:
         raise ValueError("LanguageId/LangId column was not found.")
-    if not table.entity_key_column_name:
+    if not table.key_column_names:
         raise ValueError("Main entity foreign key column was not found.")
 
     text_columns = table.text_columns()
@@ -129,7 +138,7 @@ def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
         raise ValueError("No allow-listed translatable text column was found.")
 
     language_key = table.language_column_name.casefold()
-    entity_key = table.entity_key_column_name.casefold()
+    entity_keys = {column_name.casefold() for column_name in table.key_column_names}
     text_keys = {column.name.casefold() for column in text_columns}
 
     insert_columns: list[InsertColumnPlan] = []
@@ -145,7 +154,7 @@ def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
             insert_columns.append(InsertColumnPlan(column, "target_language"))
             continue
 
-        if column_key == entity_key:
+        if column_key in entity_keys:
             insert_columns.append(InsertColumnPlan(column, "copy_from_source"))
             continue
 
@@ -173,8 +182,11 @@ def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
         if column_plan.mode in {"copy_from_source", "translated_text"}:
             source_columns.append(column_name)
 
-    if table.entity_key_column_name not in source_columns:
-        source_columns.append(table.entity_key_column_name)
+    source_column_keys = {column_name.casefold() for column_name in source_columns}
+    for entity_key_column_name in table.key_column_names:
+        if entity_key_column_name.casefold() not in source_column_keys:
+            source_columns.append(entity_key_column_name)
+            source_column_keys.add(entity_key_column_name.casefold())
 
     deduped_source_columns: list[str] = []
     seen_source_columns: set[str] = set()

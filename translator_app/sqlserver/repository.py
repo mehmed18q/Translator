@@ -119,20 +119,19 @@ class SqlServerLocalizationRepository:
         batch_size: int,
     ) -> Iterator[dict[str, object]]:
         select_columns = self._pending_select_columns(plan)
-        entity_key_column_name = required(plan.table.entity_key_column_name)
-        last_entity_key_value: object | None = None
+        last_key_values: tuple[object, ...] | None = None
 
         while True:
             sql = self._pending_rows_sql(
                 plan,
                 f"TOP ({max(batch_size, 1)}) {select_columns}",
                 order_by=True,
-                after_entity_key=last_entity_key_value is not None,
+                after_key_values=last_key_values,
             )
             cursor = self._cursor(self.read_connection)
             params: list[object] = [target_language_id, source_language_id]
-            if last_entity_key_value is not None:
-                params.append(last_entity_key_value)
+            if last_key_values is not None:
+                params.extend(self._after_key_params(plan.table, last_key_values))
 
             try:
                 cursor.execute(sql, *params)
@@ -145,7 +144,7 @@ class SqlServerLocalizationRepository:
 
             for row in rows:
                 source_row = dict(zip(column_names, row, strict=False))
-                last_entity_key_value = source_row.get(entity_key_column_name)
+                last_key_values = self._key_values_from_row(plan.table, source_row)
                 yield source_row
 
     def insert_translation(
@@ -182,7 +181,8 @@ class SqlServerLocalizationRepository:
         self,
         plan: TableTranslationPlan,
         *,
-        entity_key_value: object,
+        entity_key_value: object | None = None,
+        entity_key_values: dict[str, object] | None = None,
         translated_values: dict[str, object],
         target_language_id: int,
     ) -> int:
@@ -190,7 +190,15 @@ class SqlServerLocalizationRepository:
             return 0
 
         table_name = quote_table(plan.table.schema_name, plan.table.table_name)
-        entity_key_column = quote_identifier(required(plan.table.entity_key_column_name))
+        key_values = self._normalize_key_values(
+            plan.table,
+            entity_key_value=entity_key_value,
+            entity_key_values=entity_key_values,
+        )
+        key_condition = " AND ".join(
+            f"{quote_identifier(column_name)} = ?"
+            for column_name, _value in key_values
+        )
         language_column = quote_identifier(required(plan.table.language_column_name))
         cursor = self._cursor(self.write_connection)
         updated_columns = 0
@@ -201,14 +209,14 @@ class SqlServerLocalizationRepository:
 UPDATE {table_name}
 SET {column} = ?
 WHERE
-    {entity_key_column} = ?
+    {key_condition}
     AND {language_column} = ?
     AND {self._missing_text_value_condition(column_name)}
 """
                 cursor.execute(
                     sql,
                     translated_value,
-                    entity_key_value,
+                    *(value for _column_name, value in key_values),
                     target_language_id,
                 )
                 rowcount = getattr(cursor, "rowcount", -1)
@@ -289,12 +297,12 @@ WHERE
         select_expression: str,
         *,
         order_by: bool,
-        after_entity_key: bool = False,
+        after_key_values: tuple[object, ...] | None = None,
     ) -> str:
         table = plan.table
         table_name = quote_table(table.schema_name, table.table_name)
         language_column = quote_identifier(required(table.language_column_name))
-        entity_key_column = quote_identifier(required(table.entity_key_column_name))
+        join_condition = self._key_join_condition(table, "dst", "src")
         pending_conditions = [
             f"dst.{language_column} IS NULL",
             *(
@@ -306,7 +314,7 @@ WHERE
 SELECT {select_expression}
 FROM {table_name} AS src
 LEFT JOIN {table_name} AS dst
-    ON dst.{entity_key_column} = src.{entity_key_column}
+    ON {join_condition}
     AND dst.{language_column} = ?
 WHERE
     src.{language_column} = ?
@@ -314,10 +322,10 @@ WHERE
         {" OR ".join(pending_conditions)}
     )
 """
-        if after_entity_key:
-            sql += f"    AND src.{entity_key_column} > ?\n"
+        if after_key_values is not None:
+            sql += f"    AND ({self._after_key_condition(table)})\n"
         if order_by:
-            sql += f"ORDER BY src.{entity_key_column}"
+            sql += f"ORDER BY {self._order_by_columns(table, 'src')}"
         return sql
 
     def _pending_select_columns(self, plan: TableTranslationPlan) -> str:
@@ -375,6 +383,88 @@ WHERE
         if table_alias:
             column = f"{table_alias}.{column}"
         return f"NULLIF(LTRIM(RTRIM(CAST({column} AS NVARCHAR(MAX)))), N'') IS NOT NULL"
+
+    def _key_column_names(self, table: LocalizeTable) -> tuple[str, ...]:
+        key_column_names = table.key_column_names
+        if not key_column_names:
+            return (required(table.entity_key_column_name),)
+        return key_column_names
+
+    def _key_join_condition(
+        self,
+        table: LocalizeTable,
+        left_alias: str,
+        right_alias: str,
+    ) -> str:
+        return " AND ".join(
+            (
+                f"{left_alias}.{quote_identifier(column_name)} = "
+                f"{right_alias}.{quote_identifier(column_name)}"
+            )
+            for column_name in self._key_column_names(table)
+        )
+
+    def _order_by_columns(self, table: LocalizeTable, table_alias: str) -> str:
+        return ", ".join(
+            f"{table_alias}.{quote_identifier(column_name)}"
+            for column_name in self._key_column_names(table)
+        )
+
+    def _after_key_condition(self, table: LocalizeTable) -> str:
+        key_columns = self._key_column_names(table)
+        conditions: list[str] = []
+        for column_index, column_name in enumerate(key_columns):
+            equality_conditions = [
+                f"src.{quote_identifier(previous_column)} = ?"
+                for previous_column in key_columns[:column_index]
+            ]
+            greater_condition = f"src.{quote_identifier(column_name)} > ?"
+            conditions.append(
+                "(" + " AND ".join([*equality_conditions, greater_condition]) + ")"
+            )
+        return " OR ".join(conditions)
+
+    def _after_key_params(
+        self,
+        table: LocalizeTable,
+        key_values: tuple[object, ...],
+    ) -> list[object]:
+        key_columns = self._key_column_names(table)
+        if len(key_values) != len(key_columns):
+            raise ValueError("Entity key value count does not match table metadata.")
+
+        params: list[object] = []
+        for value_index, value in enumerate(key_values):
+            params.extend(key_values[:value_index])
+            params.append(value)
+        return params
+
+    def _key_values_from_row(
+        self,
+        table: LocalizeTable,
+        row: dict[str, object],
+    ) -> tuple[object, ...]:
+        return tuple(
+            row.get(column_name)
+            for column_name in self._key_column_names(table)
+        )
+
+    def _normalize_key_values(
+        self,
+        table: LocalizeTable,
+        *,
+        entity_key_value: object | None,
+        entity_key_values: dict[str, object] | None,
+    ) -> tuple[tuple[str, object], ...]:
+        key_columns = self._key_column_names(table)
+        if entity_key_values is not None:
+            return tuple(
+                (column_name, entity_key_values[column_name])
+                for column_name in key_columns
+            )
+        if len(key_columns) == 1:
+            return ((key_columns[0], entity_key_value),)
+        raise ValueError("Composite entity key values are required.")
 
     def _resolve_insert_value(
         self,
