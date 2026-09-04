@@ -120,7 +120,7 @@ def remove_localize_suffix(table_name: str) -> str:
 
 def build_table_translation_plan(table: LocalizeTable) -> TableTranslationPlan:
     if not table.language_column_name:
-        raise ValueError("LanguageId column was not found.")
+        raise ValueError("LanguageId/LangId column was not found.")
     if not table.entity_key_column_name:
         raise ValueError("Main entity foreign key column was not found.")
 

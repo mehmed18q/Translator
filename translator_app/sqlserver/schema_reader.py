@@ -15,6 +15,8 @@ from translator_app.special_tables import (
     is_resource_table,
 )
 
+LANGUAGE_COLUMN_CANDIDATES = ("LanguageId", "LangId")
+
 
 class SqlServerSchemaReader:
     def __init__(self, connection: object) -> None:
@@ -50,7 +52,7 @@ class SqlServerSchemaReader:
             )
 
             foreign_keys = tuple(foreign_keys_by_object.get(object_id, ()))
-            language_column = find_column_name(columns, "LanguageId")
+            language_column = find_language_column_name(columns)
             entity_key_column, referenced_table = find_entity_key_column(
                 schema_name=first_row.schema_name,
                 table_name=first_row.table_name,
@@ -195,6 +197,22 @@ def find_column_name(columns: Iterable[ColumnInfo], expected_name: str) -> str |
     return None
 
 
+def find_language_column_name(columns: Iterable[ColumnInfo]) -> str | None:
+    for expected_name in LANGUAGE_COLUMN_CANDIDATES:
+        found = find_column_name(columns, expected_name)
+        if found:
+            return found
+    return None
+
+
+def is_language_column_name(column_name: str) -> bool:
+    normalized_name = column_name.casefold()
+    return any(
+        normalized_name == expected_name.casefold()
+        for expected_name in LANGUAGE_COLUMN_CANDIDATES
+    )
+
+
 def find_entity_key_column(
     *,
     schema_name: str = "dbo",
@@ -214,7 +232,7 @@ def find_entity_key_column(
         items[0]
         for items in fk_groups.values()
         if len(items) == 1
-        and items[0].parent_column_name.casefold() != "languageid"
+        and not is_language_column_name(items[0].parent_column_name)
     ]
 
     for foreign_key in single_column_foreign_keys:
@@ -245,7 +263,7 @@ def find_entity_key_column(
         column_name = column.name.casefold()
         if (
             column_name.endswith("id")
-            and column_name != "languageid"
+            and not is_language_column_name(column.name)
             and not column.is_identity
         ):
             return column.name, base_table_name

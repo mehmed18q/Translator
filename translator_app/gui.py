@@ -4,10 +4,12 @@ import json
 import logging
 import queue
 import threading
+import time
 import traceback
 import urllib.error
 import urllib.request
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 from tkinter import BooleanVar, StringVar, TclError, Tk, Toplevel, filedialog
 from tkinter import scrolledtext
@@ -90,6 +92,8 @@ class TranslatorGuiApp:
         self.worker_thread: threading.Thread | None = None
         self.followup_config: RuntimeConfig | None = None
         self.running_job_name = ""
+        self.operation_started_monotonic: float | None = None
+        self.resx_started_monotonic: float | None = None
 
         self.env_values = read_env_values(ENV_PATH)
         self._configure_style()
@@ -283,6 +287,9 @@ class TranslatorGuiApp:
         self.inserted_rows_var = StringVar(value="0")
         self.skipped_existing_rows_var = StringVar(value="0")
         self.failed_rows_var = StringVar(value="0")
+        self.operation_started_var = StringVar(value="-")
+        self.operation_finished_var = StringVar(value="-")
+        self.operation_duration_var = StringVar(value="-")
 
         self.resx_status_var = StringVar(value="Ready")
         self.resx_log_file_var = StringVar(value="-")
@@ -303,6 +310,9 @@ class TranslatorGuiApp:
         self.resx_failed_entries_var = StringVar(value="0")
         self.resx_created_files_var = StringVar(value="0")
         self.resx_updated_files_var = StringVar(value="0")
+        self.resx_started_var = StringVar(value="-")
+        self.resx_finished_var = StringVar(value="-")
+        self.resx_duration_var = StringVar(value="-")
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -620,6 +630,9 @@ class TranslatorGuiApp:
         self._add_metric(metrics, 1, 2, "Inserted rows", self.inserted_rows_var)
         self._add_metric(metrics, 1, 3, "Existing skipped", self.skipped_existing_rows_var)
         self._add_metric(metrics, 2, 0, "Failed rows", self.failed_rows_var)
+        self._add_metric(metrics, 2, 1, "Started", self.operation_started_var)
+        self._add_metric(metrics, 2, 2, "Finished", self.operation_finished_var)
+        self._add_metric(metrics, 2, 3, "Duration", self.operation_duration_var)
 
     def _build_resources_tab(self) -> None:
         self.resources_tab.columnconfigure(0, weight=1)
@@ -838,6 +851,9 @@ class TranslatorGuiApp:
         self._add_metric(metrics, 2, 2, "Failed keys", self.resx_failed_entries_var)
         self._add_metric(metrics, 2, 3, "Created files", self.resx_created_files_var)
         self._add_metric(metrics, 3, 0, "Updated files", self.resx_updated_files_var)
+        self._add_metric(metrics, 3, 1, "Started", self.resx_started_var)
+        self._add_metric(metrics, 3, 2, "Finished", self.resx_finished_var)
+        self._add_metric(metrics, 3, 3, "Duration", self.resx_duration_var)
 
     def _build_logs_tab(self) -> None:
         self.logs_tab.columnconfigure(0, weight=1)
@@ -1032,6 +1048,7 @@ class TranslatorGuiApp:
         self.running_job_name = job_name
         self.cancel_event.clear()
         self._reset_resx_progress()
+        self._start_resx_timing()
         self._set_running(True)
         self._append_log(f"Job started: {job_name}")
 
@@ -1167,6 +1184,7 @@ class TranslatorGuiApp:
         self.running_job_name = job_name
         self.cancel_event.clear()
         self._reset_progress()
+        self._start_operation_timing()
         self._set_running(True)
         self._append_log(f"Job started: {job_name}")
 
@@ -1511,6 +1529,7 @@ class TranslatorGuiApp:
                 self._append_log(str(message))
                 self._show_error(str(title), str(message))
 
+        self._refresh_running_duration()
         self.root.after(200, self._poll_events)
 
     def _apply_progress(self, snapshot: object) -> None:
@@ -1567,6 +1586,7 @@ class TranslatorGuiApp:
         log_file: str,
     ) -> None:
         self._set_running(False)
+        self._finish_resx_timing()
         self.resx_status_var.set("Finished")
         self.resx_log_file_var.set(log_file)
         self._append_log(f"Job finished: {job_name}")
@@ -1597,6 +1617,7 @@ class TranslatorGuiApp:
         log_file: str,
     ) -> None:
         self._set_running(False)
+        self._finish_operation_timing()
         self.status_var.set("Finished")
         self.log_file_var.set(log_file)
         self._append_log(f"Job finished: {job_name}")
@@ -1632,6 +1653,7 @@ class TranslatorGuiApp:
         log_file: str,
     ) -> None:
         self._set_running(False)
+        self._finish_operation_timing()
         self.status_var.set("Error")
         self.log_file_var.set(log_file)
         self._append_log(f"Job failed: {job_name}: {message}")
@@ -1646,6 +1668,7 @@ class TranslatorGuiApp:
         log_file: str,
     ) -> None:
         self._set_running(False)
+        self._finish_resx_timing()
         self.resx_status_var.set("Error")
         self.resx_log_file_var.set(log_file)
         self._append_log(f"Job failed: {job_name}: {message}")
@@ -1668,6 +1691,10 @@ class TranslatorGuiApp:
         self.inserted_rows_var.set("0")
         self.skipped_existing_rows_var.set("0")
         self.failed_rows_var.set("0")
+        self.operation_started_var.set("-")
+        self.operation_finished_var.set("-")
+        self.operation_duration_var.set("-")
+        self.operation_started_monotonic = None
 
     def _reset_resx_progress(self) -> None:
         self.resx_status_var.set("Starting...")
@@ -1690,6 +1717,52 @@ class TranslatorGuiApp:
         self.resx_failed_entries_var.set("0")
         self.resx_created_files_var.set("0")
         self.resx_updated_files_var.set("0")
+        self.resx_started_var.set("-")
+        self.resx_finished_var.set("-")
+        self.resx_duration_var.set("-")
+        self.resx_started_monotonic = None
+
+    def _start_operation_timing(self) -> None:
+        self.operation_started_monotonic = time.monotonic()
+        self.operation_started_var.set(format_timestamp(datetime.now()))
+        self.operation_finished_var.set("-")
+        self.operation_duration_var.set("00:00:00")
+
+    def _finish_operation_timing(self) -> None:
+        if self.operation_started_monotonic is None:
+            return
+        elapsed_seconds = time.monotonic() - self.operation_started_monotonic
+        self.operation_finished_var.set(format_timestamp(datetime.now()))
+        self.operation_duration_var.set(format_duration(elapsed_seconds))
+        self.operation_started_monotonic = None
+
+    def _start_resx_timing(self) -> None:
+        self.resx_started_monotonic = time.monotonic()
+        self.resx_started_var.set(format_timestamp(datetime.now()))
+        self.resx_finished_var.set("-")
+        self.resx_duration_var.set("00:00:00")
+
+    def _finish_resx_timing(self) -> None:
+        if self.resx_started_monotonic is None:
+            return
+        elapsed_seconds = time.monotonic() - self.resx_started_monotonic
+        self.resx_finished_var.set(format_timestamp(datetime.now()))
+        self.resx_duration_var.set(format_duration(elapsed_seconds))
+        self.resx_started_monotonic = None
+
+    def _refresh_running_duration(self) -> None:
+        if not self._is_worker_running():
+            return
+
+        if self.running_job_name.startswith("resx-"):
+            if self.resx_started_monotonic is not None:
+                elapsed_seconds = time.monotonic() - self.resx_started_monotonic
+                self.resx_duration_var.set(format_duration(elapsed_seconds))
+            return
+
+        if self.operation_started_monotonic is not None:
+            elapsed_seconds = time.monotonic() - self.operation_started_monotonic
+            self.operation_duration_var.set(format_duration(elapsed_seconds))
 
     def _set_running(self, running: bool) -> None:
         state = "disabled" if running else "normal"
@@ -1954,6 +2027,17 @@ def bool_to_env(value: bool) -> str:
     return "true" if value else "false"
 
 
+def format_timestamp(value: datetime) -> str:
+    return value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def format_duration(seconds: float) -> str:
+    total_seconds = max(int(seconds), 0)
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
 def parse_int(value: str, name: str) -> int:
     try:
         return int(value)
@@ -2032,6 +2116,7 @@ def phase_label(phase: str) -> str:
         "prepared": "Ready",
         "running": "Running",
         "table-finished": "Table finished",
+        "table-failed": "Table failed",
         "finished": "Finished",
     }
     return labels.get(phase, phase)

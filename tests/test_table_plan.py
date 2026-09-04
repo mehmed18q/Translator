@@ -11,7 +11,10 @@ from translator_app.models import (
     LocalizeTable,
     build_table_translation_plan,
 )
-from translator_app.sqlserver.schema_reader import find_entity_key_column
+from translator_app.sqlserver.schema_reader import (
+    find_entity_key_column,
+    find_language_column_name,
+)
 
 
 def column(
@@ -88,6 +91,64 @@ class TablePlanTests(unittest.TestCase):
 
         self.assertEqual(entity_key, "SiteMenuId")
         self.assertEqual(referenced_table, "SiteMenu")
+
+    def test_finds_lang_id_language_column_case_insensitively(self) -> None:
+        columns = (
+            column("Id", "int", is_identity=True, is_primary_key=True),
+            column("SampleId", "int"),
+            column("LangID", "int"),
+            column("Title", "nvarchar"),
+        )
+
+        self.assertEqual(find_language_column_name(columns), "LangID")
+
+    def test_lang_id_is_not_used_as_entity_key(self) -> None:
+        columns = (
+            column("Id", "int", is_identity=True, is_primary_key=True),
+            column("LangId", "int"),
+            column("SampleId", "int"),
+            column("Title", "nvarchar"),
+        )
+        foreign_keys = (
+            ForeignKeyInfo("FK_Language", "LangId", "dbo", "Language", "Id"),
+            ForeignKeyInfo("FK_Sample", "SampleId", "dbo", "Sample", "Id"),
+        )
+
+        entity_key, referenced_table = find_entity_key_column(
+            table_name="SampleLocalize",
+            columns=columns,
+            foreign_keys=foreign_keys,
+        )
+
+        self.assertEqual(entity_key, "SampleId")
+        self.assertEqual(referenced_table, "Sample")
+
+    def test_builds_insert_plan_with_lang_id_alias(self) -> None:
+        table = LocalizeTable(
+            schema_name="dbo",
+            table_name="SampleLocalize",
+            object_id=5,
+            columns=(
+                column("Id", "int", is_identity=True, is_primary_key=True),
+                column("SampleId", "int"),
+                column("LangID", "int"),
+                column("Title", "nvarchar"),
+            ),
+            foreign_keys=(),
+            language_column_name="LangID",
+            entity_key_column_name="SampleId",
+            referenced_table_name="Sample",
+        )
+
+        plan = build_table_translation_plan(table)
+        insert_modes = {
+            item.column.name: item.mode
+            for item in plan.insert_columns
+        }
+
+        self.assertEqual(insert_modes["LangID"], "target_language")
+        self.assertEqual(insert_modes["SampleId"], "copy_from_source")
+        self.assertEqual(insert_modes["Title"], "translated_text")
 
     def test_infers_resource_key_for_resource_table(self) -> None:
         columns = (

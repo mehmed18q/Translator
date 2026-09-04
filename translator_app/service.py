@@ -215,91 +215,125 @@ class DatabaseTranslationService:
             table_failed = 0
             table = plan.table
 
-            for source_row in self.repository.iter_missing_source_rows(
-                plan,
-                source_language_id=config.source_language.id,
-                target_language_id=config.target_language.id,
-                batch_size=config.batch_size,
-            ):
-                if self._is_cancelled():
-                    self.logger.warning("Operation stopped by user request.")
-                    return
+            self.logger.info(
+                "Table started: %s | table=%s/%s | pending=%s | key=%s",
+                table.display_name,
+                table_index,
+                len(planned_tables),
+                pending_count,
+                table.entity_key_column_name,
+            )
+            try:
+                for source_row in self.repository.iter_missing_source_rows(
+                    plan,
+                    source_language_id=config.source_language.id,
+                    target_language_id=config.target_language.id,
+                    batch_size=config.batch_size,
+                ):
+                    if self._is_cancelled():
+                        self.logger.warning("Operation stopped by user request.")
+                        return
 
-                entity_value = source_row.get(table.entity_key_column_name or "")
-                row_status = "failed"
-                try:
-                    if self.repository.destination_exists(
-                        table,
-                        entity_key_value=entity_value,
-                        target_language_id=config.target_language.id,
-                    ):
-                        summary.skipped_existing_rows += 1
-                        row_status = "skipped-existing"
-                    else:
-                        translated_values = self._translate_row(
-                            plan,
-                            source_row,
-                            config,
-                        )
-                        run_with_retry(
-                            lambda: self.repository.insert_translation(
-                                plan,
-                                source_row=source_row,
-                                translated_values=translated_values,
-                                target_language_id=config.target_language.id,
-                            ),
-                            operation_name=(
-                                f"insert {table.display_name} "
-                                f"{table.entity_key_column_name}={entity_value}"
-                            ),
-                            attempts=config.retry.attempts,
-                            initial_delay_seconds=config.retry.initial_delay_seconds,
-                            backoff_factor=config.retry.backoff_factor,
-                            logger=self.logger,
-                        )
-                        summary.inserted_rows += 1
-                        row_status = "inserted"
-                except KeyboardInterrupt:
-                    raise
-                except Exception as exc:
-                    summary.failed_rows += 1
-                    table_failed += 1
+                    entity_value = source_row.get(table.entity_key_column_name or "")
                     row_status = "failed"
-                    self.logger.exception(
-                        "Row failed: %s.%s=%r | reason=%s",
-                        table.display_name,
-                        table.entity_key_column_name,
-                        entity_value,
-                        exc,
-                    )
-                finally:
-                    summary.processed_rows += 1
-                    table_processed += 1
+                    try:
+                        if self.repository.destination_exists(
+                            table,
+                            entity_key_value=entity_value,
+                            target_language_id=config.target_language.id,
+                        ):
+                            summary.skipped_existing_rows += 1
+                            row_status = "skipped-existing"
+                        else:
+                            translated_values = self._translate_row(
+                                plan,
+                                source_row,
+                                config,
+                            )
+                            run_with_retry(
+                                lambda: self.repository.insert_translation(
+                                    plan,
+                                    source_row=source_row,
+                                    translated_values=translated_values,
+                                    target_language_id=config.target_language.id,
+                                ),
+                                operation_name=(
+                                    f"insert {table.display_name} "
+                                    f"{table.entity_key_column_name}={entity_value}"
+                                ),
+                                attempts=config.retry.attempts,
+                                initial_delay_seconds=config.retry.initial_delay_seconds,
+                                backoff_factor=config.retry.backoff_factor,
+                                logger=self.logger,
+                            )
+                            summary.inserted_rows += 1
+                            row_status = "inserted"
+                    except KeyboardInterrupt:
+                        raise
+                    except Exception as exc:
+                        summary.failed_rows += 1
+                        table_failed += 1
+                        row_status = "failed"
+                        self.logger.exception(
+                            "Row failed: %s.%s=%r | reason=%s",
+                            table.display_name,
+                            table.entity_key_column_name,
+                            entity_value,
+                            exc,
+                        )
+                    finally:
+                        summary.processed_rows += 1
+                        table_processed += 1
 
-                if table_processed % config.progress_every == 0:
-                    self._emit_progress(
-                        summary,
-                        phase="running",
-                        current_table=table.display_name,
-                        current_table_index=table_index,
-                        total_tables=len(planned_tables),
-                        table_pending_rows=pending_count,
-                        table_processed_rows=table_processed,
-                    )
-                    self.logger.info(
-                        "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s skipped_existing=%s failed=%s",
-                        format_progress(summary.processed_rows, summary.pending_rows),
-                        table_index,
-                        len(planned_tables),
-                        format_progress(table_processed, pending_count),
-                        table.display_name,
-                        table.entity_key_column_name,
-                        entity_value,
-                        row_status,
-                        summary.inserted_rows,
-                        summary.skipped_existing_rows,
-                        summary.failed_rows,
-                    )
+                    if table_processed % config.progress_every == 0:
+                        self._emit_progress(
+                            summary,
+                            phase="running",
+                            current_table=table.display_name,
+                            current_table_index=table_index,
+                            total_tables=len(planned_tables),
+                            table_pending_rows=pending_count,
+                            table_processed_rows=table_processed,
+                        )
+                        self.logger.info(
+                            "%s | table %s/%s %s | %s.%s=%r | status=%s | inserted=%s skipped_existing=%s failed=%s",
+                            format_progress(summary.processed_rows, summary.pending_rows),
+                            table_index,
+                            len(planned_tables),
+                            format_progress(table_processed, pending_count),
+                            table.display_name,
+                            table.entity_key_column_name,
+                            entity_value,
+                            row_status,
+                            summary.inserted_rows,
+                            summary.skipped_existing_rows,
+                            summary.failed_rows,
+                        )
+            except KeyboardInterrupt:
+                raise
+            except Exception as exc:
+                remaining_table_rows = max(pending_count - table_processed, 0)
+                summary.skipped_tables += 1
+                summary.failed_rows += remaining_table_rows
+                summary.processed_rows += remaining_table_rows
+                table_failed += remaining_table_rows
+                self.logger.exception(
+                    "Table failed during row iteration: %s | processed=%s remaining_marked_failed=%s | reason=%s",
+                    table.display_name,
+                    table_processed,
+                    remaining_table_rows,
+                    exc,
+                )
+                self._emit_progress(
+                    summary,
+                    phase="table-failed",
+                    current_table=table.display_name,
+                    current_table_index=table_index,
+                    total_tables=len(planned_tables),
+                    table_pending_rows=pending_count,
+                    table_processed_rows=pending_count,
+                )
+                continue
 
             self.logger.info(
                 "Table finished: %s | processed=%s failed=%s",
