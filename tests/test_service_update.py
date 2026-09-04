@@ -105,6 +105,15 @@ class PrefixTranslator(Translator):
         return f"{target_language}:{text}"
 
 
+class StrictFormattingHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(self.format(record))
+
+
 class ServiceUpdateTests(unittest.TestCase):
     def test_updates_only_empty_target_text_columns(self) -> None:
         row = {
@@ -177,6 +186,37 @@ class ServiceUpdateTests(unittest.TestCase):
         self.assertEqual(
             repository.inserts[0]["translated_values"],
             {"Title": "en:خانه", "Description": "en:توضیح"},
+        )
+
+    def test_progress_logging_formats_row_value(self) -> None:
+        row = {
+            "SampleId": 1,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 1,
+            target_value_column_name("Title"): "Home",
+            target_value_column_name("Description"): None,
+        }
+        repository = FakeRepository([row])
+        translator = PrefixTranslator()
+        handler = StrictFormattingHandler()
+        logger = logging.getLogger("test_service_update_progress_logging")
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+
+        service = DatabaseTranslationService(
+            schema_reader=FakeSchemaReader([build_table()]),
+            repository=repository,
+            translator=translator,
+            logger=logger,
+        )
+
+        service.run(build_config())
+
+        self.assertTrue(
+            any("row=SampleId=1" in message for message in handler.messages),
+            handler.messages,
         )
 
 

@@ -9,9 +9,18 @@ import traceback
 import urllib.error
 import urllib.request
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import BooleanVar, StringVar, TclError, Tk, Toplevel, filedialog
+from tkinter import (
+    BooleanVar,
+    Canvas,
+    PhotoImage,
+    StringVar,
+    TclError,
+    Tk,
+    Toplevel,
+    filedialog,
+)
 from tkinter import scrolledtext
 from tkinter import ttk
 
@@ -38,6 +47,7 @@ from translator_app.translators.base import Translator
 
 
 ENV_PATH = Path(".env")
+APP_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "app_logo.png"
 BG_COLOR = "#f6f8fb"
 CARD_COLOR = "#ffffff"
 TEXT_COLOR = "#182230"
@@ -53,6 +63,135 @@ GUI_LANGUAGE_NAMES = {
     5: "Chinese",
     6: "Russian",
 }
+
+
+class ScrollableFrame(ttk.Frame):
+    _active_frame: ScrollableFrame | None = None
+    _global_bindings_installed = False
+
+    def __init__(self, parent: ttk.Notebook, *, padding: int = 14) -> None:
+        super().__init__(parent, style="App.TFrame")
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.canvas = Canvas(
+            self,
+            background=BG_COLOR,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self.vertical_scrollbar = ttk.Scrollbar(
+            self,
+            orient="vertical",
+            command=self.canvas.yview,
+        )
+        self.horizontal_scrollbar = ttk.Scrollbar(
+            self,
+            orient="horizontal",
+            command=self.canvas.xview,
+        )
+        self.canvas.configure(
+            yscrollcommand=self.vertical_scrollbar.set,
+            xscrollcommand=self.horizontal_scrollbar.set,
+        )
+
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.vertical_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.horizontal_scrollbar.grid(row=1, column=0, sticky="ew")
+
+        self.content = ttk.Frame(self.canvas, padding=padding, style="App.TFrame")
+        self.content_window = self.canvas.create_window(
+            (0, 0),
+            window=self.content,
+            anchor="nw",
+        )
+
+        self.bind("<Enter>", self._activate)
+        self.bind("<Leave>", self._deactivate_if_outside)
+        self.canvas.bind("<Enter>", self._activate)
+        self.canvas.bind("<Leave>", self._deactivate_if_outside)
+        self.content.bind("<Enter>", self._activate)
+        self.content.bind("<Leave>", self._deactivate_if_outside)
+        self.canvas.bind("<Configure>", self._update_scroll_region)
+        self.content.bind("<Configure>", self._update_scroll_region)
+        self._install_global_mousewheel_bindings()
+
+    def _activate(self, _event: object) -> None:
+        ScrollableFrame._active_frame = self
+
+    @classmethod
+    def clear_active(cls, _event: object | None = None) -> None:
+        cls._active_frame = None
+
+    def _deactivate_if_outside(self, _event: object) -> None:
+        pointer_x = self.winfo_pointerx()
+        pointer_y = self.winfo_pointery()
+        left = self.winfo_rootx()
+        top = self.winfo_rooty()
+        right = left + self.winfo_width()
+        bottom = top + self.winfo_height()
+        if left <= pointer_x < right and top <= pointer_y < bottom:
+            return
+
+        if ScrollableFrame._active_frame is self:
+            ScrollableFrame.clear_active()
+
+    def _update_scroll_region(self, _event: object | None = None) -> None:
+        requested_width = self.content.winfo_reqwidth()
+        requested_height = self.content.winfo_reqheight()
+        content_width = max(requested_width, self.canvas.winfo_width())
+        content_height = max(requested_height, self.canvas.winfo_height())
+        self.canvas.itemconfigure(
+            self.content_window,
+            width=content_width,
+            height=content_height,
+        )
+        self.canvas.configure(scrollregion=(0, 0, content_width, content_height))
+
+    def _install_global_mousewheel_bindings(self) -> None:
+        if ScrollableFrame._global_bindings_installed:
+            return
+
+        ScrollableFrame._global_bindings_installed = True
+        self.bind_all("<MouseWheel>", self._on_global_mousewheel)
+        self.bind_all("<Shift-MouseWheel>", self._on_global_shift_mousewheel)
+        self.bind_all("<Button-4>", self._on_global_mousewheel)
+        self.bind_all("<Button-5>", self._on_global_mousewheel)
+        self.bind_all("<Shift-Button-4>", self._on_global_shift_mousewheel)
+        self.bind_all("<Shift-Button-5>", self._on_global_shift_mousewheel)
+
+    def _on_global_mousewheel(self, event: object) -> str | None:
+        active_frame = ScrollableFrame._active_frame
+        if active_frame is None:
+            return None
+
+        if getattr(event, "state", 0) & 0x0001:
+            scrolled = active_frame._scroll_horizontal(event)
+        else:
+            scrolled = active_frame._scroll_vertical(event)
+        return "break" if scrolled else None
+
+    def _on_global_shift_mousewheel(self, event: object) -> str | None:
+        active_frame = ScrollableFrame._active_frame
+        if active_frame is None:
+            return None
+
+        scrolled = active_frame._scroll_horizontal(event)
+        return "break" if scrolled else None
+
+    def _scroll_vertical(self, event: object) -> bool:
+        units = mousewheel_units(event)
+        if not can_scroll(self.canvas.yview(), units):
+            return False
+        self.canvas.yview_scroll(units, "units")
+        return True
+
+    def _scroll_horizontal(self, event: object) -> bool:
+        units = mousewheel_units(event)
+        if not can_scroll(self.canvas.xview(), units):
+            return False
+        self.canvas.xview_scroll(units, "units")
+        return True
 
 
 class QueueLogHandler(logging.Handler):
@@ -83,8 +222,10 @@ class TranslatorGuiApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
         self.root.title("SQL Server Localize Translator")
+        self.logo_image: PhotoImage | None = None
+        self._set_window_icon()
         self.root.geometry("1120x780")
-        self.root.minsize(980, 700)
+        self.root.minsize(720, 460)
         self.root.configure(background=BG_COLOR)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -94,11 +235,16 @@ class TranslatorGuiApp:
         self.running_job_name = ""
         self.operation_started_monotonic: float | None = None
         self.resx_started_monotonic: float | None = None
+        self.operation_last_processed_rows = 0
+        self.operation_last_remaining_rows = 0
+        self.resx_last_processed_entries = 0
+        self.resx_last_remaining_entries = 0
 
         self.env_values = read_env_values(ENV_PATH)
         self._configure_style()
         self._build_variables()
         self._build_layout()
+        maximize_window(self.root)
         self._poll_events()
 
     def _configure_style(self) -> None:
@@ -196,6 +342,16 @@ class TranslatorGuiApp:
         )
         style.configure("Horizontal.TProgressbar", thickness=12)
 
+    def _set_window_icon(self) -> None:
+        if not APP_LOGO_PATH.exists():
+            return
+
+        try:
+            self.logo_image = PhotoImage(file=str(APP_LOGO_PATH))
+            self.root.iconphoto(True, self.logo_image)
+        except TclError:
+            self.logo_image = None
+
     def _build_variables(self) -> None:
         env = self.env_values
 
@@ -291,6 +447,8 @@ class TranslatorGuiApp:
         self.operation_started_var = StringVar(value="-")
         self.operation_finished_var = StringVar(value="-")
         self.operation_duration_var = StringVar(value="-")
+        self.operation_average_rate_var = StringVar(value="-")
+        self.operation_estimated_finish_var = StringVar(value="-")
 
         self.resx_status_var = StringVar(value="Ready")
         self.resx_log_file_var = StringVar(value="-")
@@ -314,6 +472,8 @@ class TranslatorGuiApp:
         self.resx_started_var = StringVar(value="-")
         self.resx_finished_var = StringVar(value="-")
         self.resx_duration_var = StringVar(value="-")
+        self.resx_average_rate_var = StringVar(value="-")
+        self.resx_estimated_finish_var = StringVar(value="-")
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -341,14 +501,17 @@ class TranslatorGuiApp:
         notebook = ttk.Notebook(shell)
         notebook.grid(row=1, column=0, sticky="nsew")
 
-        self.settings_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
-        self.operation_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
-        self.resources_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
+        self.settings_scroll = ScrollableFrame(notebook)
+        self.operation_scroll = ScrollableFrame(notebook)
+        self.resources_scroll = ScrollableFrame(notebook)
+        self.settings_tab = self.settings_scroll.content
+        self.operation_tab = self.operation_scroll.content
+        self.resources_tab = self.resources_scroll.content
         self.logs_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
 
-        notebook.add(self.settings_tab, text="Connection")
-        notebook.add(self.operation_tab, text="Operation")
-        notebook.add(self.resources_tab, text="Resources")
+        notebook.add(self.settings_scroll, text="Connection")
+        notebook.add(self.operation_scroll, text="Operation")
+        notebook.add(self.resources_scroll, text="Resources")
         notebook.add(self.logs_tab, text="Logs")
 
         self._build_settings_tab()
@@ -635,6 +798,14 @@ class TranslatorGuiApp:
         self._add_metric(metrics, 2, 2, "Started", self.operation_started_var)
         self._add_metric(metrics, 2, 3, "Finished", self.operation_finished_var)
         self._add_metric(metrics, 3, 0, "Duration", self.operation_duration_var)
+        self._add_metric(metrics, 3, 1, "Avg rec/sec", self.operation_average_rate_var)
+        self._add_metric(
+            metrics,
+            3,
+            2,
+            "Estimated finish",
+            self.operation_estimated_finish_var,
+        )
 
     def _build_resources_tab(self) -> None:
         self.resources_tab.columnconfigure(0, weight=1)
@@ -856,10 +1027,19 @@ class TranslatorGuiApp:
         self._add_metric(metrics, 3, 1, "Started", self.resx_started_var)
         self._add_metric(metrics, 3, 2, "Finished", self.resx_finished_var)
         self._add_metric(metrics, 3, 3, "Duration", self.resx_duration_var)
+        self._add_metric(metrics, 4, 0, "Avg rec/sec", self.resx_average_rate_var)
+        self._add_metric(
+            metrics,
+            4,
+            1,
+            "Estimated finish",
+            self.resx_estimated_finish_var,
+        )
 
     def _build_logs_tab(self) -> None:
         self.logs_tab.columnconfigure(0, weight=1)
         self.logs_tab.rowconfigure(0, weight=1)
+        self.logs_tab.bind("<Enter>", ScrollableFrame.clear_active)
 
         self.log_text = scrolledtext.ScrolledText(
             self.logs_tab,
@@ -875,6 +1055,7 @@ class TranslatorGuiApp:
             pady=12,
             font=("Consolas", 10),
         )
+        self.log_text.bind("<Enter>", ScrollableFrame.clear_active)
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
         controls = ttk.Frame(self.logs_tab, style="App.TFrame")
@@ -1554,6 +1735,9 @@ class TranslatorGuiApp:
         self.updated_rows_var.set(str(snapshot.updated_rows))
         self.skipped_existing_rows_var.set(str(snapshot.skipped_existing_rows))
         self.failed_rows_var.set(str(snapshot.failed_rows))
+        self.operation_last_processed_rows = snapshot.processed_rows
+        self.operation_last_remaining_rows = snapshot.remaining_rows
+        self._refresh_operation_throughput()
 
     def _apply_resx_progress(self, snapshot: object) -> None:
         if not isinstance(snapshot, ResxProgressSnapshot):
@@ -1581,6 +1765,9 @@ class TranslatorGuiApp:
         self.resx_failed_entries_var.set(str(snapshot.failed_entries))
         self.resx_created_files_var.set(str(snapshot.created_files))
         self.resx_updated_files_var.set(str(snapshot.updated_files))
+        self.resx_last_processed_entries = snapshot.processed_entries
+        self.resx_last_remaining_entries = snapshot.remaining_entries
+        self._refresh_resx_throughput()
 
     def _handle_resx_job_done(
         self,
@@ -1700,7 +1887,11 @@ class TranslatorGuiApp:
         self.operation_started_var.set("-")
         self.operation_finished_var.set("-")
         self.operation_duration_var.set("-")
+        self.operation_average_rate_var.set("-")
+        self.operation_estimated_finish_var.set("-")
         self.operation_started_monotonic = None
+        self.operation_last_processed_rows = 0
+        self.operation_last_remaining_rows = 0
 
     def _reset_resx_progress(self) -> None:
         self.resx_status_var.set("Starting...")
@@ -1726,13 +1917,19 @@ class TranslatorGuiApp:
         self.resx_started_var.set("-")
         self.resx_finished_var.set("-")
         self.resx_duration_var.set("-")
+        self.resx_average_rate_var.set("-")
+        self.resx_estimated_finish_var.set("-")
         self.resx_started_monotonic = None
+        self.resx_last_processed_entries = 0
+        self.resx_last_remaining_entries = 0
 
     def _start_operation_timing(self) -> None:
         self.operation_started_monotonic = time.monotonic()
         self.operation_started_var.set(format_timestamp(datetime.now()))
         self.operation_finished_var.set("-")
         self.operation_duration_var.set("00:00:00")
+        self.operation_average_rate_var.set("-")
+        self.operation_estimated_finish_var.set("-")
 
     def _finish_operation_timing(self) -> None:
         if self.operation_started_monotonic is None:
@@ -1740,6 +1937,7 @@ class TranslatorGuiApp:
         elapsed_seconds = time.monotonic() - self.operation_started_monotonic
         self.operation_finished_var.set(format_timestamp(datetime.now()))
         self.operation_duration_var.set(format_duration(elapsed_seconds))
+        self._refresh_operation_throughput(elapsed_seconds)
         self.operation_started_monotonic = None
 
     def _start_resx_timing(self) -> None:
@@ -1747,6 +1945,8 @@ class TranslatorGuiApp:
         self.resx_started_var.set(format_timestamp(datetime.now()))
         self.resx_finished_var.set("-")
         self.resx_duration_var.set("00:00:00")
+        self.resx_average_rate_var.set("-")
+        self.resx_estimated_finish_var.set("-")
 
     def _finish_resx_timing(self) -> None:
         if self.resx_started_monotonic is None:
@@ -1754,6 +1954,7 @@ class TranslatorGuiApp:
         elapsed_seconds = time.monotonic() - self.resx_started_monotonic
         self.resx_finished_var.set(format_timestamp(datetime.now()))
         self.resx_duration_var.set(format_duration(elapsed_seconds))
+        self._refresh_resx_throughput(elapsed_seconds)
         self.resx_started_monotonic = None
 
     def _refresh_running_duration(self) -> None:
@@ -1764,11 +1965,51 @@ class TranslatorGuiApp:
             if self.resx_started_monotonic is not None:
                 elapsed_seconds = time.monotonic() - self.resx_started_monotonic
                 self.resx_duration_var.set(format_duration(elapsed_seconds))
+                self._refresh_resx_throughput(elapsed_seconds)
             return
 
         if self.operation_started_monotonic is not None:
             elapsed_seconds = time.monotonic() - self.operation_started_monotonic
             self.operation_duration_var.set(format_duration(elapsed_seconds))
+            self._refresh_operation_throughput(elapsed_seconds)
+
+    def _refresh_operation_throughput(
+        self,
+        elapsed_seconds: float | None = None,
+    ) -> None:
+        if elapsed_seconds is None:
+            if self.operation_started_monotonic is None:
+                return
+            elapsed_seconds = time.monotonic() - self.operation_started_monotonic
+        self.operation_average_rate_var.set(
+            format_average_rate(self.operation_last_processed_rows, elapsed_seconds)
+        )
+        self.operation_estimated_finish_var.set(
+            format_estimated_finish(
+                self.operation_last_processed_rows,
+                self.operation_last_remaining_rows,
+                elapsed_seconds,
+            )
+        )
+
+    def _refresh_resx_throughput(
+        self,
+        elapsed_seconds: float | None = None,
+    ) -> None:
+        if elapsed_seconds is None:
+            if self.resx_started_monotonic is None:
+                return
+            elapsed_seconds = time.monotonic() - self.resx_started_monotonic
+        self.resx_average_rate_var.set(
+            format_average_rate(self.resx_last_processed_entries, elapsed_seconds)
+        )
+        self.resx_estimated_finish_var.set(
+            format_estimated_finish(
+                self.resx_last_processed_entries,
+                self.resx_last_remaining_entries,
+                elapsed_seconds,
+            )
+        )
 
     def _set_running(self, running: bool) -> None:
         state = "disabled" if running else "normal"
@@ -1948,6 +2189,27 @@ def copyable_dialog_kind_label(kind: str) -> str:
     return labels.get(kind, "Message")
 
 
+def maximize_window(root: Tk) -> None:
+    try:
+        root.state("zoomed")
+        return
+    except TclError:
+        pass
+
+    try:
+        root.attributes("-zoomed", True)
+        return
+    except TclError:
+        pass
+
+    try:
+        width = root.winfo_screenwidth()
+        height = root.winfo_screenheight()
+        root.geometry(f"{width}x{height}+0+0")
+    except TclError:
+        pass
+
+
 def add_entry(
     parent: ttk.Frame,
     row: int,
@@ -2042,6 +2304,85 @@ def format_duration(seconds: float) -> str:
     hours, remainder = divmod(total_seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def mousewheel_units(event: object) -> int:
+    event_num = getattr(event, "num", None)
+    if event_num == 4:
+        return -1
+    if event_num == 5:
+        return 1
+
+    delta = int(getattr(event, "delta", 0))
+    if delta == 0:
+        return 0
+
+    units = int(-delta / 120)
+    if units == 0:
+        return -1 if delta > 0 else 1
+    return units
+
+
+def can_scroll(view: tuple[float, float], units: int) -> bool:
+    first, last = view
+    if units == 0 or (first <= 0.0 and last >= 1.0):
+        return False
+    if units < 0 and first <= 0.0:
+        return False
+    if units > 0 and last >= 1.0:
+        return False
+    return True
+
+
+def calculate_average_rate(processed_items: int, elapsed_seconds: float) -> float | None:
+    if processed_items <= 0 or elapsed_seconds <= 0:
+        return None
+    return processed_items / elapsed_seconds
+
+
+def format_average_rate(
+    processed_items: int,
+    elapsed_seconds: float,
+    *,
+    unit: str = "rec",
+) -> str:
+    average_rate = calculate_average_rate(processed_items, elapsed_seconds)
+    if average_rate is None:
+        return "-"
+    return f"{average_rate:.2f} {unit}/s"
+
+
+def estimate_remaining_seconds(
+    processed_items: int,
+    remaining_items: int,
+    elapsed_seconds: float,
+) -> float | None:
+    if remaining_items <= 0:
+        return 0.0 if processed_items > 0 else None
+
+    average_rate = calculate_average_rate(processed_items, elapsed_seconds)
+    if average_rate is None:
+        return None
+    return remaining_items / average_rate
+
+
+def format_estimated_finish(
+    processed_items: int,
+    remaining_items: int,
+    elapsed_seconds: float,
+    *,
+    now: datetime | None = None,
+) -> str:
+    remaining_seconds = estimate_remaining_seconds(
+        processed_items,
+        remaining_items,
+        elapsed_seconds,
+    )
+    if remaining_seconds is None:
+        return "-"
+
+    current_time = now or datetime.now()
+    return format_timestamp(current_time + timedelta(seconds=remaining_seconds))
 
 
 def parse_int(value: str, name: str) -> int:

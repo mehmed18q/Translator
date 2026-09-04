@@ -337,7 +337,7 @@ class DatabaseTranslationService:
                             table_processed_rows=table_processed,
                         )
                         self.logger.info(
-                            "%s | table %s/%s %s | %s | %s | status=%s | inserted=%s updated=%s skipped_existing=%s failed=%s",
+                            "%s | table %s/%s %s | %s | key=%s | row=%s | status=%s | inserted=%s updated=%s skipped_existing=%s failed=%s",
                             format_progress(summary.processed_rows, summary.pending_rows),
                             table_index,
                             len(planned_tables),
