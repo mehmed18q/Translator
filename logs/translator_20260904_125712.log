@@ -1,0 +1,345 @@
+2026-09-04 12:57:12 | INFO     | Starting translation: source=fa target=en | mode=dry-run
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.AccountGroupLocalize | base=AccountGroup | fk=AccountGroupId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.AccountTypeLocalize | base=AccountType | fk=AccountTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.FiscalYearLocalize | base=FiscalYear | fk=FiscalYearId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.GeneralAccountLocalize | base=GeneralAccount | fk=GeneralAccountId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.LedgerLocalize | base=Ledger | fk=LedgerId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.NatureTypeLocalize | base=NatureType | fk=NatureTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.SubsidiaryAccountLocalize | base=SubsidiaryAccount | fk=SubsidiaryAccountId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.VoucherStatusLocalize | base=VoucherStatus | fk=VoucherStatusId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: acnt.VoucherTypeLocalize | base=VoucherType | fk=VoucherTypeId | translatable_columns=Title, Note, OwnerSubSystem | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: Club.AwardLocalizes | base=Awards | fk=AwardId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: Club.DiscountLocalizes | base=Discounts | fk=DiscountId | translatable_columns=Title, Description | pending=1
+2026-09-04 12:57:12 | INFO     | Table ready: Club.EarnPointMethodLocalizes | base=EarnPointMethods | fk=EarnPointMethodId | translatable_columns=Title, Description | pending=45
+2026-09-04 12:57:12 | INFO     | Table ready: Club.FortuneWheelLocalizes | base=FortuneWheels | fk=FortuneWheelId | translatable_columns=Title, Description | pending=2
+2026-09-04 12:57:12 | INFO     | Table ready: Club.LotteryLocalizes | base=Lotteries | fk=LotteryId | translatable_columns=Title, Description | pending=3
+2026-09-04 12:57:12 | INFO     | Table ready: Club.LotteryTypeLocalizes | base=LotteryTypes | fk=LotteryTypeId | translatable_columns=Title, Description | pending=6
+2026-09-04 12:57:12 | INFO     | Table ready: Club.PeriodLocalizes | base=Periods | fk=PeriodId | translatable_columns=Title, Description | pending=2
+2026-09-04 12:57:12 | INFO     | Table ready: Club.PlanLocalizes | base=Plans | fk=PlanId | translatable_columns=Title, Description | pending=3
+2026-09-04 12:57:12 | INFO     | Table ready: Club.UsePointMethodLocalizes | base=UsePointMethods | fk=UsePointMethodId | translatable_columns=Title, Description | pending=18
+2026-09-04 12:57:12 | INFO     | Table ready: crm.OrganizationSectionsLocalize | base=OrganizationSections | fk=OrganizationSectionId | translatable_columns=Title | pending=7
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketCommunicationChannelsLocalize | base=TicketCommunicationChannels | fk=TicketCommunicationChannelId | translatable_columns=Title | pending=9
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketHistoriesLocalize | base=TicketHistories | fk=TicketHistoriesId | translatable_columns=Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketsLocalize | base=Tickets | fk=TicketId | translatable_columns=Title | pending=832
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketStatusesLocalize | base=TicketStatuses | fk=TicketStatusId | translatable_columns=Title | pending=4
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketThreadResultTypesLocalize | base=TicketThreadResultTypes | fk=TicketThreadResultTypeId | translatable_columns=Title | pending=31
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketThreadsLocalize | base=TicketThreads | fk=TicketThreadsId | translatable_columns=Title, Description, Hashtag | pending=3149
+2026-09-04 12:57:12 | INFO     | Table ready: crm.TicketTopicsLocalize | base=TicketTopics | fk=TicketTopicId | translatable_columns=Title | pending=35
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AccessTypeLocalize | base=AccessType | fk=AccessTypeId | translatable_columns=Title | pending=9
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AcquaintanceTypesLocalize | base=AcquaintanceTypes | fk=AcquaintanceTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:12 | ERROR    | Table skipped: dbo.AgreementLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:12 | ERROR    | Table skipped: dbo.AgreementTypeLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AssociationLocalize | base=Association | fk=AssociationId | translatable_columns=Title, IssuanceAuthorityTitle, Description, Slogan, Rules, Keywords | pending=3
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AssociationMediaLocalize | base=AssociationMedia | fk=AssociationMediaId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AssociationMemberLocalize | base=AssociationMember | fk=AssociationMemberId | translatable_columns=Post, Description | pending=6
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.AssociationPostTypeLocalize | base=AssociationPostType | fk=AssociationPostTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.BankAccountLocalize | base=BankAccount | fk=BankAccountId | translatable_columns=Title, BankName, OwnerName, BranchName, Description | pending=12
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.BPresenttoCustomerLocalize | base=BPresenttoCustomer | fk=BPresenttoCustomerId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.BugReportsLocalize | base=BugReports | fk=BugReportsId | translatable_columns=Title, Description, FullName | pending=2594
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.BugReportTypeLocalize | base=BugReportType | fk=BugReportTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.CalendarsLocalize | base=Calendars | fk=CalendarsId | translatable_columns=Title, Name, SloganText, Description | pending=25
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.CertVersionLocalize | base=CertVersion | fk=CertVersionId | translatable_columns=Description | pending=19
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.CheckoutHistoryLocalize | base=CheckoutHistory | fk=CheckoutHistoryId | translatable_columns=Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.CompanyTypeLocalize | base=Tbl_CompanyType | fk=CompanyTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.CurrencyValuesLocalize | base=CurrencyValues | fk=CurrencyValuesId | translatable_columns=Description | pending=4523
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.DeductionTypesLocalize | base=DeductionTypes | fk=DeductionTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.DeliveryCertificationLocalize | base=DeliveryCertification | fk=DeliveryCertificationId | translatable_columns=DeliveryPerson, DeliveryPlace, Description | pending=346
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.EmailTemplateLocalize | base=EmailTemplate | fk=EmailTemplateId | translatable_columns=HTMLContent, TextContent | pending=17
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.ExpertCodesLocalize | base=ExpertCodes | fk=ExpertCodesId | translatable_columns=Description | pending=1
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.ExpertInvoiceDeductionsLocalize | base=ExpertInvoiceDeductions | fk=ExpertInvoiceDeductionsId | translatable_columns=Description | pending=4
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.ExpertInvoiceDetailsLocalize | base=ExpertInvoiceDetails | fk=ExpertInvoiceDetailsId | translatable_columns=Title | pending=617
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.ExpertsInvoiceLocalize | base=ExpertsInvoice | fk=ExpertsInvoiceId | translatable_columns=Title, Description | pending=106
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.GalleryAgenciesLocalize | base=GalleryAgencies | fk=GalleryAgencyId | translatable_columns=Title, Slogan, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.GuerehDomainLocalize | base=GuerehDomain | fk=GuerehDomainId | translatable_columns=Title | pending=10
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.GuerehReportLocalize | base=GuerehReport | fk=GuerehReportId | translatable_columns=PageTitle, BreadCrumbTitle | pending=24
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.InvoiceItemsLocalize | base=InvoiceItems | fk=InvoiceItemId | translatable_columns=Title | pending=28369
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.InvoicePaymentsLocalize | base=InvoicePayments | fk=InvoicePaymentId | translatable_columns=PayedBy, Description | pending=5368
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.InvoicesLocalize | base=Invoices | fk=InvoiceId | translatable_columns=Title | pending=5068
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.LetterLocalize | base=Letter | fk=LetterId | translatable_columns=Title, SigningUserPosition, Description, PostedBy, Address | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.MessagesLocalize | base=Messages | fk=MessagesId | translatable_columns=Title, Description | pending=373967
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.MLTestLocalize | base=MLTest | fk=MLTestId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.PageContentLocalize | base=PageContent | fk=PageContentId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.PaymentExpertInvoiceLocalize | base=PaymentExpertInvoice | fk=PaymentExpertInvoiceId | translatable_columns=Description | pending=10
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.PodcastLocalize | base=Podcast | fk=PodcastId | translatable_columns=Title | pending=167
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.QR_TypesLocalize | base=QR_Types | fk=QRTypeId | translatable_columns=Title | pending=14
+2026-09-04 12:57:12 | INFO     | Table ready: dbo.QRCodeLocalize | base=QR_Codes | fk=QRCodeId | translatable_columns=Description | pending=10405
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.RequestsLocalize | base=Requests | fk=RequestsId | translatable_columns=Description, ResponseComment | pending=205
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Resource | base=Resource | fk=Key | translatable_columns=Value | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.RugsIGCImagesLocalize | base=Tbl_RugsIGC_Images | fk=RugsIGCImagesId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.RugsTransactionHeaderHistoryLocalize | base=RugsTransactionHeaderHistory | fk=RugsTransactionHeaderHistoryId | translatable_columns=Description | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.RugTransactionImagesLocalize | base=Tbl_RugTransactionImages | fk=RugTransactionImagesId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.ServiceSchedulerLocalize | base=ServiceScheduler | fk=ServiceSchedulerId | translatable_columns=Title, Description | pending=4
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.SiteMenusLocalize | base=SiteMenus | fk=SiteMenuId | translatable_columns=Title, Keywords, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.SliderGroupsLocalize | base=SliderGroups | fk=SliderGroupId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.SliderGroupTypesLocalize | base=SliderGroupTypes | fk=SliderGroupTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.SlidersLocalize | base=Sliders | fk=SliderId | translatable_columns=Title, CountdownTitle, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.StoreLocalize | base=Store | fk=StoreId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.StoreRugLocalize | base=StoreRug | fk=StoreRugId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.SuspensionCertLocalize | base=SuspensionCert | fk=SuspensionCertId | translatable_columns=Description | pending=6
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ActivityTypesLocalize | base=Tbl_ActivityTypes | fk=ActivityTypeId | translatable_columns=Title | pending=10
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_AddressesLocalize | base=Tbl_Addresses | fk=AddressesId | translatable_columns=Title, Address, Receiver, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticleCommentLocalize | base=Tbl_ArticleComment | fk=Tbl_ArticleCommentId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticleLocalize | base=Tbl_Article | fk=ArticleId | translatable_columns=Title, Abstract, Keywords, Body, Writers, UniCourse, RelatedUniFiled, ConferenceName, Description | pending=103
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticlePresentationTypeLocalize | base=Tbl_ArticlePresentationType | fk=ArticlePresentationTypeId | translatable_columns=Title | pending=6
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticleThemeLocalize | base=Tbl_ArticleTheme | fk=Tbl_ArticleThemeId | translatable_columns=Title, Description | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticleThemeTypeLocalize | base=Tbl_ArticleThemeType | fk=Tbl_ArticleThemeTypeId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ArticleTypeLocalize | base=Tbl_ArticleType | fk=ArticleTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_AssociationsTypeLocalize | base=Tbl_AssociationsType | fk=AssociationsTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_AuthenticationTypeLocalize | base=Tbl_AuthenticationType | fk=AuthenticationTypeId | translatable_columns=Title | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CalendarLocalize | base=Tbl_Calendar | fk=CalendarId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CertRequestTypeLocalize | base=Tbl_CertRequestType | fk=CertRequestTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CertTypesLocalize | base=Tbl_CertTypes | fk=CertTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CityLocalize | base=Tbl_City | fk=CityId | translatable_columns=Title | pending=1215
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CodeTypeLocalize | base=Tbl_CodeType | fk=CodeTypeId | translatable_columns=Title | pending=2
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ColorsLocalize | base=Tbl_Colors | fk=ColorId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CompanyPersonnelLocalize | base=Tbl_CompanyPersonnel | fk=CompanyPersonnelId | translatable_columns=PersonnelName, LegalManager, Post | pending=3982
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Competition_Design_InfoLocalize | base=Tbl_Competition_Design_Info | fk=Tbl_Competition_Design_InfoId | translatable_columns=Title, Description | pending=10
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Competitions_Design_FilesLocalize | base=Tbl_Competitions_Design_Files | fk=Tbl_Competitions_Design_FilesId | translatable_columns=Description | pending=60
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CompetitionsLocalize | base=Tbl_Competitions | fk=Tbl_CompetitionsId | translatable_columns=Title, ShortDescription, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ContactsSelectedListLocalize | base=Tbl_ContactsSelectedList | fk=ContactsSelectedListId | translatable_columns=Title | pending=11
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ContactUsLocalize | base=Tbl_ContactUs | fk=Tbl_ContactUsId | translatable_columns=Title, Name, Description | pending=12887
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ContractTypeLocalize | base=Tbl_ContractType | fk=ContractTypeId | translatable_columns=Title | pending=4
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CostsLocalize | base=Tbl_Costs | fk=Tbl_CostsId | translatable_columns=Description | pending=4
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CostTypeLocalize | base=Tbl_CostType | fk=CostTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CostTypeRugLocalize | base=Tbl_CostTypeRug | fk=CostTypeRugId | translatable_columns=Title | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CostWagesLocalize | base=Tbl_CostWages | fk=CostWageId | translatable_columns=Title | pending=2
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CountryLocalize | base=Tbl_Country | fk=Tbl_CountryId | translatable_columns=Title, Nationality | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CurrencyTitleLocalize | base=Tbl_CurrencyTitle | fk=CurrencyTitleId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_CustomsPackingHeaderLocalize | base=Tbl_CustomsPackingHeader | fk=Tbl_CustomsPackingHeaderId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_DesignPatternLocalize | base=Tbl_DesignPattern | fk=DesignPatternId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_DiscountLocalize | base=Tbl_Discount | fk=Tbl_DiscountId | translatable_columns=Description | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_DurationsLocalize | base=Tbl_Durations | fk=DurationId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_EmailsHistoryLocalize | base=Tbl_EmailsHistory | fk=EmailsHistoryId | translatable_columns=Title, Body, Name, Description | pending=9
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_EmailsLocalize | base=Tbl_Emails | fk=Tbl_EmailsId | translatable_columns=Title, Description | pending=97
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_EventLocalize | base=Tbl_Events | fk=EventId | translatable_columns=Title, Text | pending=1178
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_EventTypesLocalize | base=Tbl_EventTypes | fk=EventTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_FileLocalize | base=Tbl_File | fk=FileId | translatable_columns=Hashtag | pending=73
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_GalleristChargesLocalize | base=Tbl_GalleristCharges | fk=Tbl_GalleristChargesId | translatable_columns=Description | pending=24
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_GalleristsLocalize | base=Tbl_Gallerists | fk=GalleristsId | translatable_columns=Title, Slogan, Description, Keywords | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_GenderLocalize | base=Tbl_Gender | fk=Tbl_GenderId | translatable_columns=Title, Prefix | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_HandWovenTypeLocalize | base=Tbl_HandWovenType | fk=HandWovenTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_IGC_CountryLocalize | base=Tbl_IGC_Country | fk=Tbl_IGC_CountryId | translatable_columns=Title, Description | pending=6
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ImagesLocalize | base=Tbl_Images | fk=Tbl_ImagesId | translatable_columns=Title, Description | pending=411
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ImageTypeLocalize | base=Tbl_ImageType | fk=ImageTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_IranCodeLocalize | base=Tbl_IranCode | fk=Tbl_IranCodeId | translatable_columns=Description | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_KnotTypeLocalize | base=Tbl_KnotType | fk=KnotTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalActivityTypeLocalize | base=Tbl_LegalActivityType | fk=LegalActivityTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalAddresesLocalize | base=Tbl_LegalAddreses | fk=Tbl_LegalAddresesId | translatable_columns=Description | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalEmailLocalize | base=Tbl_LegalEmail | fk=Tbl_LegalEmailId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalImagesLocalize | base=Tbl_LegalImages | fk=Tbl_LegalImagesId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalLocalize | base=Tbl_Legal | fk=LegalId | translatable_columns=ManagerName, CompanyName, CompanyTopic, Mobasher, SenfiDegere, RasteSenfiName, Descrption, AssociationTitle | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalTelephoneLocalize | base=Tbl_LegalTelephone | fk=Tbl_LegalTelephoneId | translatable_columns=Description | pending=2
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LegalWebsiteLocalize | base=Tbl_LegalWebsite | fk=Tbl_LegalWebsiteId | translatable_columns=Description | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LendedRugsHeaderLocalize | base=Tbl_LendedRugsHeader | fk=LendedRugsHeaderId | translatable_columns=Name, FUserAddress, SUserAddress | pending=16
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LexiconsLocalize | base=Tbl_Lexicons | fk=Tbl_LexiconsId | translatable_columns=Title, Description | pending=1914
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LicenseTypeLocalize | base=Tbl_LicenseType | fk=LicenseTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_LinksLocalize | base=Tbl_Links | fk=Tbl_LinksId | translatable_columns=Title, Description | pending=2
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_MesurementUnitsLocalize | base=Tbl_MesurementUnits | fk=MeasurementUnitId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_NewsLocalize | base=Tbl_News | fk=NewsId | translatable_columns=Title, Slogan, Description, Keywords | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Orginality_CityLocalize | base=Tbl_Orginality_City | fk=OriginalityCityId | translatable_columns=Title | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_OwnerCodeLocalize | base=Tbl_OwnerCode | fk=Tbl_OwnerCodeId | translatable_columns=Title, Description | pending=30166
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PackagesLocalize | base=Tbl_Packages | fk=PackageId | translatable_columns=Title | pending=4
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PackageTypeLocalize | base=Tbl_PackageType | fk=PackageTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Permissions_UsersLocalize | base=Tbl_Permissions_Users | fk=Tbl_Permissions_UsersId | translatable_columns=Description | pending=1907
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PermissionsLocalize | base=Tbl_Permissions | fk=PermissionId | translatable_columns=Title | pending=47
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PermissionsTypeLocalize | base=Tbl_PermissionsType | fk=PermissionsTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PhoneTypeLocalize | base=Tbl_PhoneType | fk=PhoneTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PileLocalize | base=Tbl_Pile | fk=PileId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PlacesLocalize | base=Tbl_Places | fk=PlaceId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_PresentToCostumerHeaderLocalize | base=Tbl_PresentToCostumerHeader | fk=PresentToCostumerHeaderId | translatable_columns=Title, Body, Name, Description, CodeDescription, UserName | pending=41
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ProfileJobsLocalize | base=Tbl_ProfileJobs | fk=Tbl_ProfileJobsId | translatable_columns=Post, Description | pending=27546
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ProfileLocalize | base=Tbl_Profile | fk=ProfileId | translatable_columns=FirstName, LastName, LegalName, FatherName | pending=19294
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_provinceLocalize | base=Tbl_province | fk=ProvinceId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_ReguestTypesLocalize | base=Tbl_ReguestTypes | fk=RequestTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RelatedUsersLocalize | base=Tbl_RelatedUsers | fk=RelatedUsersId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RolesLocalize | base=Tbl_Roles | fk=RoleId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugAwailabilityLocalize | base=Tbl_RugAwailability | fk=RugAvailabilityId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugCertPrintsLocalize | base=Tbl_RugCertPrints | fk=Tbl_RugCertPrintsId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugChargesLocalize | base=Tbl_RugCharges | fk=Tbl_RugChargesId | translatable_columns=Description | pending=25
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugCmdLocalize | base=Tbl_RugCmd | fk=RugCmdId | translatable_columns=ReceiverUserName, Address, Description, BasketName | pending=6
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugExpertHistoryLocalize | base=Tbl_RugExpertHistory | fk=Tbl_RugExpertHistoryId | translatable_columns=Description, Address, AssociationManager, AuthorityDescription | pending=2850
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugImageHeaderLocalize | base=Tbl_RugImageHeader | fk=Tbl_RugImageHeaderId | translatable_columns=Title, Description | pending=8
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugImageSizeTypeLocalize | base=Tbl_RugImageSizeType | fk=RugImageSizeTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugImagesLocalize | base=Tbl_RugImages | fk=Tbl_RugImagesId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugImageTypeLocalize | base=Tbl_RugImageType | fk=RugImageTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugOwnerExpertHistoryLocalize | base=Tbl_RugOwnerExpertHistory | fk=Tbl_RugOwnerExpertHistoryId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugServicesLocalize | base=Tbl_RugServices | fk=RugServiceId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugsGs1Localize | base=Tbl_RugsGs1 | fk=RugsGs1Id | translatable_columns=DesignPattern_idComment, YarnType_idComment, Originality_City_idComment, Designer_User_idComment, PatternNameComment, RugCodeComment, WidthComment, WidthHomeNumberComment, HeightComment, HeightHomeNumberComment, Size_idComment, CountKnotComment, MabdaRaj_idComment, WeightComment, SurfaceComment, Pile_idComment, Warp_idComment, Weft_idComment, BackgroundColor_idComment, BorderColor_idComment, DepthComment, DensityComment, PreparationTimeMonthComment, WeaverCountComment, Producer_User_idComment, Weaver_User_idComment, CountColorComment, ImageMainComment, PatternName_EnComment, CreateYear_faComment, HandWovenType_idComment, WeaveType_idComment, KnotType_idComment, RugTransaction_idComment, ConfirmationCertAuthority_idComment, TimeToWeavComment, Description, CertIdentityComment, StyleCityIdComment | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugsListHeaderLocalize | base=Tbl_RugsListHeader | fk=RugsListHeaderId | translatable_columns=Title, UserName, Address, MainDescription, Description | pending=65
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugsLocalize | base=Tbl_Rugs | fk=Tbl_RugsId | translatable_columns=PatternName, Description, CertDescription, AssocationManger, ConfirmDescription, CertAssocationManger | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugsRepository_HistoryLocalize | base=Tbl_RugsRepository_History | fk=Tbl_RugsRepository_HistoryId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugsTransactionHeaderLocalize | base=Tbl_RugsTransactionHeader | fk=RugsTransactionHeaderId | translatable_columns=Title, FOwnerAddress, SOwnerAddress, Description | pending=494
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugTempLocalize | base=Tbl_RugTemp | fk=Tbl_RugTempId | translatable_columns=PatternName, Description | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_RugVideosLocalize | base=Tbl_RugVideos | fk=Tbl_RugVideosId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SelectedRugsListLocalize | base=Tbl_SelectedRugsList | fk=Tbl_SelectedRugsListId | translatable_columns=Title, Description | pending=35
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SelectedRugsLocalize | base=Tbl_SelectedRugs | fk=Tbl_SelectedRugsId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SelectorPersonelLocalize | base=Tbl_SelectorPersonel | fk=Tbl_SelectorPersonelId | translatable_columns=Title, Description | pending=5
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SelectorsLocalize | base=Tbl_Selectors | fk=Tbl_SelectorsId | translatable_columns=Title, Name, Description | pending=4
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SettingLocalize | base=Tbl_Setting | fk=SettingId | translatable_columns=Title, AboutUs, Rules, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SizeLocalize | base=Tbl_Size | fk=SizeId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SizeTypeLocalize | base=Tbl_SizeType | fk=SizeTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SmsEmailToGalleriesLocalize | base=Tbl_SmsEmailToGalleries | fk=SmsEmailToGalleryId | translatable_columns=FirstName, LastName, Text, Description | pending=8
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SocialMediaTitleLocalize | base=Tbl_SocialMediaTitle | fk=SocialMediaTitleId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_SortLocalize | base=Tbl_Sort | fk=Tbl_SortId | translatable_columns=Title, Description | pending=5
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.TbL_TaxLocalize | base=TbL_Tax | fk=TbL_TaxId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_TaxTypeLocalize | base=Tbl_TaxType | fk=TaxTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_TelephoneLocalize | base=Tbl_Telephone | fk=TelephoneId | translatable_columns=Title | pending=840
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_TransactionTypeLocalize | base=Tbl_TransactionType | fk=TransactionTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_TransportTypeLocalize | base=Tbl_TransportType | fk=TransportTypeId | translatable_columns=Title | pending=3
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserCodeLocalize | base=Tbl_UserCode | fk=Tbl_UserCodeId | translatable_columns=Title, Description | pending=564
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserCodeTypeLocalize | base=Tbl_UserCodeType | fk=UserCodeTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserContactsLocalize | base=Tbl_UserContacts | fk=Tbl_UserContactsId | translatable_columns=Description, UseContact2, InvitationText | pending=1051
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserContactsTypeLocalize | base=Tbl_UserContactsType | fk=UserContactsTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserJobsLocalize | base=Tbl_UserJobs | fk=UserJobId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserNational_IdsLocalize | base=Tbl_UserNational_Ids | fk=UserNationalIdId | translatable_columns=Title | pending=27488
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserPackagesLocalize | base=Tbl_UserPackages | fk=UserPackageId | translatable_columns=Title | pending=127
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserRugsRepositoryLocalize | base=Tbl_UserRugsRepository | fk=Tbl_UserRugsRepositoryId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UsersAddedLocalize | base=Tbl_UsersAdded | fk=UsersAddedId | translatable_columns=Title, FirstName, LastName, LegalName, Description, FatherName | pending=39
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserSelectedRugDetailsLocalize | base=Tbl_UserSelectedRugDetails | fk=Tbl_UserSelectedRugDetailsId | translatable_columns=Description | pending=20
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UserSelectedRugsHeaderLocalize | base=Tbl_UserSelectedRugsHeader | fk=Tbl_UserSelectedRugsHeaderId | translatable_columns=Title, ShortDescription, Description | pending=13
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_UsersTypeLocalize | base=Tbl_UsersType | fk=UsersTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_WarpLocalize | base=Tbl_Warp | fk=WarpId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_WeaveTypeLocalize | base=Tbl_WeaveType | fk=WeaveTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_WebSitesLocalize | base=Tbl_WebSites | fk=Tbl_WebSitesId | translatable_columns=Title, Description | pending=20
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_WeftLocalize | base=Tbl_Weft | fk=WeftId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_WeightTitleLocalize | base=Tbl_WeightTitle | fk=WeightTitleId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Yarn_Categories_ColorsLocalize | base=Tbl_Yarn_Categories_Colors | fk=YarnCategoriesColorsId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Yarn_ColorLocalize | base=Tbl_Yarn_Color | fk=YarnColorId | translatable_columns=Title | pending=36
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Yarn_TypeLocalize | base=Tbl_Yarn_Type | fk=YarnTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_Yarn_Warp_CodeLocalize | base=Tbl_Yarn_Warp_Code | fk=Tbl_Yarn_Warp_CodeId | translatable_columns=Title, Description | pending=23
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.Tbl_YarnMaterialsLocalize | base=Tbl_YarnMaterials | fk=Tbl_YarnMaterialsId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.TeamLocalize | base=Team | fk=TeamId | translatable_columns=Position | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.UserAccessLocalize | base=UserAccess | fk=UserAccessId | translatable_columns=Description | pending=8
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.UserAsUserLocalize | base=UserAsUser | fk=UserAsUserId | translatable_columns=Description | pending=334
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.UserLetterLocalize | base=UserLetter | fk=UserLetterId | translatable_columns=Position | pending=2
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.UserReferralsLocalize | base=UserReferrals | fk=UserReferralsId | translatable_columns=ReferredFirstName, ReferredLastName | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.WalletsLocalize | base=Wallets | fk=WalletsId | translatable_columns=Description | pending=951
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.WorkingGroupActivityLocalize | base=WorkingGroupActivity | fk=WorkingGroupActivityId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.WorkingGroupLocalize | base=WorkingGroup | fk=WorkingGroupId | translatable_columns=Title, Description | pending=7
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.WorkingGroupMemberLocalize | base=WorkingGroupMember | fk=WorkingGroupMemberId | translatable_columns=Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.ZoneLocalize | base=Zone | fk=ZoneId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: dbo.ZoneTypeLocalize | base=ZoneType | fk=ZoneTypeId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: Net.ChatGroupLocalize | base=ChatGroup | fk=ChatGroupId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: Net.CommentLocalize | base=Comment | fk=CommentId | translatable_columns=Description | pending=106
+2026-09-04 12:57:13 | INFO     | Table ready: Net.ServicesTypesLocalize | base=ServicesTypes | fk=ServicesTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: Net.SkillTypeLocalize | base=SkillType | fk=SkillTypeId | translatable_columns=Title | pending=1
+2026-09-04 12:57:13 | INFO     | Table ready: Net.UnitsTypesLocalize | base=UnitsTypes | fk=UnitsTypeId | translatable_columns=Title | pending=0
+2026-09-04 12:57:13 | INFO     | Table ready: Net.UserLegacyLocalize | base=UserLegacy | fk=UserLegacyId | translatable_columns=Title, Description | pending=14547
+2026-09-04 12:57:14 | INFO     | Table ready: Net.UserServiceLocalize | base=UserService | fk=UserServiceId | translatable_columns=Title, Description | pending=162
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.GuaranteeTypeLocalize | base=GuaranteeType | fk=GuaranteeTypeId | translatable_columns=Title, Note | pending=2
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.InvestmentStatusLocalize | base=InvestmentStatus | fk=InvestmentStatusId | translatable_columns=Title, Note | pending=5
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.MapLocalize | base=Map | fk=MapId | translatable_columns=Title, Note | pending=39
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.MapPartTypeLocalize | base=MapPartType | fk=MapPartTypeId | translatable_columns=Title, Note | pending=4
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.PreSaleStatusLocalize | base=PreSaleStatus | fk=PreSaleStatusId | translatable_columns=Title, Note | pending=5
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.ProjectLocalize | base=Project | fk=ProjectId | translatable_columns=DesignTitle, Note, PreSellNote, InvestorAttractionNote | pending=16
+2026-09-04 12:57:14 | INFO     | Table ready: rgfl.RugWeavingContractStatusLocalize | base=RugWeavingContractStatus | fk=RugWeavingContractStatusId | translatable_columns=Title, Note | pending=3
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.KeywordLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.OrderStatusLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.PaymentStatusLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.PaymentTermLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.PaymentTypeLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.PriceMethodLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.PriceOfferStatusLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.ServicesLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.SettingLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.ShippingMethodLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | ERROR    | Table skipped: Shop.ShippingStatusLocalize | reason=LanguageId column was not found.
+Traceback (most recent call last):
+  File "C:\Users\mhd\source\repos\Translator\translator_app\service.py", line 140, in _prepare_tables
+    plan = build_table_translation_plan(table)
+  File "C:\Users\mhd\source\repos\Translator\translator_app\models.py", line 123, in build_table_translation_plan
+    raise ValueError("LanguageId column was not found.")
+ValueError: LanguageId column was not found.
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.QuestionBoxLocalizes | base=QuestionBoxes | fk=QuestionBoxId | translatable_columns=Title, Description | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.QuestionLocalizes | base=Questions | fk=QuestionId | translatable_columns=Title, Description | pending=11
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.QuestionOptionLocalizes | base=QuestionOptions | fk=QuestionOptionId | translatable_columns=Title, Description | pending=21
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.QuestionPropertyLocalizes | base=QuestionProperties | fk=QuestionPropertyId | translatable_columns=Title, Description | pending=33
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.QuestionTypeLocalizes | base=QuestionTypes | fk=QuestionTypeId | translatable_columns=Title, Description | pending=11
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.SurveyHeaderLocalizes | base=SurveyHeaders | fk=SurveyHeaderId | translatable_columns=Title, Description | pending=1
+2026-09-04 12:57:14 | INFO     | Table ready: Srvy.SurveyHeaderPropertyLocalizes | base=SurveyHeaderProperties | fk=SurveyHeaderPropertyId | translatable_columns=Title, Description | pending=10
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.CategoryLocalize | base=Category | fk=CategoryId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.MaterialLocalize | base=Material | fk=MaterialId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.MaterialNatureLocalize | base=MaterialNature | fk=MaterialNatureId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.MaterialTypeLocalize | base=MaterialType | fk=MaterialTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.MeasurementDimensionLocalize | base=MeasurementDimension | fk=MeasurementDimensionId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.PropertyLocalize | base=Property | fk=PropertyId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.PropertyOptionLocalize | base=PropertyOption | fk=PropertyOptionId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.PropertyTypeLocalize | base=PropertyType | fk=PropertyTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.SellTypeLocalize | base=SellType | fk=SellTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.StoreActionTypeLocalize | base=StoreActionType | fk=StoreActionTypeId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.StoreBasisLocalize | base=StoreBasis | fk=StoreBasisId | translatable_columns=Title, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Table ready: wrhs.UnitMeasurementLocalize | base=UnitMeasurement | fk=UnitMeasurementId | translatable_columns=Title, AliasTitle, Note | pending=0
+2026-09-04 12:57:14 | INFO     | Preparation summary: discovered=264 eligible=251 skipped=13 pending_rows=587111
+2026-09-04 12:57:14 | INFO     | Dry-run finished. Run with --execute to insert translated rows.

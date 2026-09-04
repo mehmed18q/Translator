@@ -1,0 +1,4 @@
+2026-09-04 12:51:01 | INFO     | Starting translation: source=fa target=en | mode=dry-run
+2026-09-04 12:51:02 | INFO     | Table ready: dbo.PageContentLocalize | base=PageContent | fk=PageContentId | translatable_columns=Title, Description | pending=85
+2026-09-04 12:51:02 | INFO     | Preparation summary: discovered=1 eligible=1 skipped=0 pending_rows=85
+2026-09-04 12:51:02 | INFO     | Dry-run finished. Run with --execute to insert translated rows.

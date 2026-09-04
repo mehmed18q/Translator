@@ -1,0 +1,6 @@
+2026-09-04 12:56:32 | INFO     | Starting translation: source=fa target=ar | mode=execute
+2026-09-04 12:56:32 | INFO     | Table ready: dbo.PageContentLocalize | base=PageContent | fk=PageContentId | translatable_columns=Title, Description | pending=1
+2026-09-04 12:56:32 | INFO     | Preparation summary: discovered=1 eligible=1 skipped=0 pending_rows=1
+2026-09-04 12:56:32 | INFO     | [########################] 100.00% | table 1/1 [########################] 100.00% | dbo.PageContentLocalize.PageContentId=96 | status=inserted | inserted=1 skipped_existing=0 failed=0
+2026-09-04 12:56:32 | INFO     | Table finished: dbo.PageContentLocalize | processed=1 failed=0
+2026-09-04 12:56:32 | INFO     | Finished: pending=1 processed=1 inserted=1 skipped_existing=0 failed=0 skipped_tables=0
