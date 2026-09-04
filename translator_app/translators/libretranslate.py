@@ -19,7 +19,14 @@ class LibreTranslateTranslator(Translator):
         self.timeout_seconds = timeout_seconds
         self.delay_seconds = delay_seconds
 
-    def translate(self, text: str, source_language: str, target_language: str) -> str:
+    def translate(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+        *,
+        text_format: str = "text",
+    ) -> str:
         try:
             import requests
         except ImportError as exc:
@@ -37,7 +44,7 @@ class LibreTranslateTranslator(Translator):
             "q": text,
             "source": source_language,
             "target": target_language,
-            "format": "text",
+            "format": normalize_text_format(text_format),
         }
         if self.api_key:
             payload["api_key"] = self.api_key
@@ -53,3 +60,9 @@ class LibreTranslateTranslator(Translator):
         if not translated_text:
             raise ValueError("LibreTranslate returned an empty response.")
         return str(translated_text)
+
+
+def normalize_text_format(text_format: str) -> str:
+    if text_format.casefold() == "html":
+        return "html"
+    return "text"

@@ -27,7 +27,14 @@ class GoogleFreeTranslator(Translator):
         self.delay_seconds = delay_seconds
         self.max_chunk_chars = max_chunk_chars
 
-    def translate(self, text: str, source_language: str, target_language: str) -> str:
+    def translate(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+        *,
+        text_format: str = "text",
+    ) -> str:
         if not text or not text.strip():
             return text
 

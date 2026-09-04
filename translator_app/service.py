@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -52,6 +53,10 @@ class ProgressSnapshot:
 
 ProgressCallback = Callable[[ProgressSnapshot], None]
 CancelCallback = Callable[[], bool]
+HTML_COLUMN_NAMES = {"htmlcontent"}
+HTML_PATTERN = re.compile(
+    r"</?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^<>]*)?>|&(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);"
+)
 
 
 class DatabaseTranslationService:
@@ -331,9 +336,11 @@ class DatabaseTranslationService:
                 translated_values[column_name] = original_value
                 continue
 
+            text_format = detect_text_format(column_name, original_text)
             cache_key = (
                 config.source_language.code,
                 config.target_language.code,
+                text_format,
                 original_text,
             )
             if cache_key not in self._translation_cache:
@@ -342,8 +349,9 @@ class DatabaseTranslationService:
                         text,
                         config.source_language.code,
                         config.target_language.code,
+                        text_format=text_format,
                     ),
-                    operation_name=f"translate column {column_name}",
+                    operation_name=f"translate column {column_name} ({text_format})",
                     attempts=config.retry.attempts,
                     initial_delay_seconds=config.retry.initial_delay_seconds,
                     backoff_factor=config.retry.backoff_factor,
@@ -412,3 +420,11 @@ def calculate_percent(done: int, total: int) -> float:
     if total <= 0:
         return 0.0
     return min(max(done / total, 0.0), 1.0) * 100
+
+
+def detect_text_format(column_name: str, text: str) -> str:
+    if column_name.casefold() in HTML_COLUMN_NAMES:
+        return "html"
+    if HTML_PATTERN.search(text):
+        return "html"
+    return "text"
