@@ -8,6 +8,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import webbrowser
 from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -70,6 +71,22 @@ GUI_LANGUAGE_NAMES = {
 }
 APP_AUTHOR = "Sadeq Kiumarsi"
 APP_COPYRIGHT_YEAR = 2026
+PROJECT_REPOSITORY_URL = "https://github.com/mehmed18q/Translator"
+GITHUB_ICON_PNG_BASE64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAYAAACNiR0NAAAACXBIWXMAAAABAAAAAQBPJcTW"
+    "AAAAAXNSR0IB2cksfwAAACBjSFJNAAB6JgAAgIQAAPoAAACA6AAAdTAAAOpgAAA6mAAAF3Cc"
+    "ulE8AAAABGdBTUEAALGPC/xhBQAAAgpJREFUeJx9lL1LHVEQxee9tyLBJCLaaCUiRogYkJjK"
+    "RrAUP1DwL9AIgYB/QrBRrC3yUQRSaCobwUL0BUEUtFCwEUUjWiTEhKSw0Og+z3DP6Oy6OvDj"
+    "7tt757y5587dnDwcOZLn7xKIOWZG9IBQAVw6kXTeVZZwlmCeApecfwHq+SdHYBtcpNbeK1jgP"
+    "2uMgVHQlFqzDz6CKYr5nIRgnhOVYB508L1tW1hlI5gEA6Ab/PKikVtopS+CdnAAasGjVIXn4B"
+    "i8AkXQRgtUo2SCdgDvKKbig+APqzhgBQ1gick74DmrHTONiJMq9gS84fZ0+2USDmFa7kYL53X"
+    "tMJgAP1Urct6pZ9VM2JVwmsJEs8Os0eo2wUtQATrBrFZpFWo8cxUU6ZXO/09VZ3+wSEGNZpv0"
+    "p1zunh9zNG992K15mpXrBU/ccy+oAafcgW8brVz97uf7nM+N5NafNY5/OX4DfeBQkh5qH34Gd"
+    "RK8112scj42QX2prbEgoRV6wCewB16DD0zQE33PZ7uaK2CLVsS2ZdvSiIRWGZfQj3ry686KZQ"
+    "lNnJfbD8RbV/2NhzGf1YsuCSc4B75K8PIH1/0GZ6CKOUMS2itixYlDsS0Uue0vYAa0OsGY1W1"
+    "IuAQbXiwt6EW1sfWu1ku4txb/aMU+bUqIZQmaaIHVfM+Y3+OY1aP3frHt+3bnA8p3JbcmEdeM"
+    "CYWOVQQ6ywAAAABJRU5ErkJggg=="
+)
 
 
 class ScrollableFrame(ttk.Frame):
@@ -230,7 +247,9 @@ class TranslatorGuiApp:
         self.root = root
         self.root.title(f"SQL Server Localize Translator v{__version__}")
         self.logo_image: PhotoImage | None = None
+        self.github_icon_image: PhotoImage | None = None
         self._set_window_icon()
+        self._set_github_icon()
         self.root.geometry("1120x780")
         self.root.minsize(720, 460)
         self.root.configure(background=BG_COLOR)
@@ -349,6 +368,20 @@ class TranslatorGuiApp:
             foreground=[("disabled", "#f8fafc")],
         )
         style.configure("Horizontal.TProgressbar", thickness=12)
+        style.configure(
+            "FooterLink.TButton",
+            background=BG_COLOR,
+            foreground=MUTED_TEXT_COLOR,
+            borderwidth=0,
+            relief="flat",
+            padding=(4, 2),
+            font=("TkDefaultFont", 9),
+        )
+        style.map(
+            "FooterLink.TButton",
+            background=[("active", BG_COLOR)],
+            foreground=[("active", PRIMARY_COLOR)],
+        )
 
     def _set_window_icon(self) -> None:
         if not APP_LOGO_PATH.exists():
@@ -359,6 +392,15 @@ class TranslatorGuiApp:
             self.root.iconphoto(True, self.logo_image)
         except TclError:
             self.logo_image = None
+
+    def _set_github_icon(self) -> None:
+        try:
+            self.github_icon_image = PhotoImage(
+                master=self.root,
+                data=GITHUB_ICON_PNG_BASE64,
+            )
+        except TclError:
+            self.github_icon_image = None
 
     def _build_variables(self) -> None:
         env = self.env_values
@@ -536,15 +578,56 @@ class TranslatorGuiApp:
             sticky="ew",
             pady=(0, 8),
         )
+        footer_content = ttk.Frame(footer, style="App.TFrame")
+        footer_content.grid(row=1, column=0)
         ttk.Label(
-            footer,
+            footer_content,
             text=(
                 f"Created by {APP_AUTHOR}  |  {APP_COPYRIGHT_YEAR}  |  "
                 f"Version {__version__}"
             ),
             style="Muted.TLabel",
             anchor="center",
-        ).grid(row=1, column=0, sticky="ew")
+        ).grid(row=0, column=0)
+        ttk.Label(
+            footer_content,
+            text="  |  ",
+            style="Muted.TLabel",
+        ).grid(row=0, column=1)
+
+        github_button_options: dict[str, object] = {}
+        if self.github_icon_image is not None:
+            github_button_options.update(
+                image=self.github_icon_image,
+                compound="left",
+            )
+        self.github_button = ttk.Button(
+            footer_content,
+            text="GitHub",
+            command=self._open_project_repository,
+            style="FooterLink.TButton",
+            cursor="hand2",
+            **github_button_options,
+        )
+        self.github_button.grid(row=0, column=2)
+
+    def _open_project_repository(self) -> None:
+        try:
+            opened = open_project_repository()
+        except Exception as exc:
+            self._show_warning(
+                "GitHub",
+                f"Could not open the project repository.\n\n"
+                f"{PROJECT_REPOSITORY_URL}\n\nDetails: {exc}",
+            )
+            return
+
+        if not opened:
+            self._show_warning(
+                "GitHub",
+                f"Could not open the project repository.\n\n"
+                f"Open this address manually:\n{PROJECT_REPOSITORY_URL}",
+            )
 
     def _warn_if_odbc_driver_missing(self) -> None:
         try:
@@ -2251,13 +2334,16 @@ def maximize_window(root: Tk) -> None:
         return
     except TclError:
         pass
-
     try:
         width = root.winfo_screenwidth()
         height = root.winfo_screenheight()
         root.geometry(f"{width}x{height}+0+0")
     except TclError:
         pass
+
+
+def open_project_repository() -> bool:
+    return bool(webbrowser.open_new_tab(PROJECT_REPOSITORY_URL))
 
 
 def add_entry(

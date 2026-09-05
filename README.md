@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.2.0" src="https://img.shields.io/badge/version-0.2.0-2563eb">
+  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="51 tests passing" src="https://img.shields.io/badge/tests-51%20passing-2ea44f">
+  <img alt="53 tests passing" src="https://img.shields.io/badge/tests-53%20passing-2ea44f">
 </p>
 
 <p align="center">
-  <strong>Version 0.2.0</strong> · <strong>2026</strong> · Created by <strong>Sadeq Kiumarsi</strong>
+  <strong>Version 0.2.1</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -55,6 +55,7 @@ The screenshots below were captured from the Linux build. The Windows executable
 - Persistent settings and logs beside the packaged executable.
 - Startup detection for Microsoft ODBC Driver 18.
 - Visible application version in the window title and permanent footer.
+- Clickable GitHub shortcut in the footer that opens the project repository.
 
 ## Windows executable
 
@@ -113,7 +114,7 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 0.2.0
+Created by Sadeq Kiumarsi | 2026 | Version 0.2.1 | GitHub
 ```
 
 ## Safe translation behavior
@@ -320,18 +321,20 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **51 tests**.
+The current release passes **53 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.
 
 ## Author
 
-Designed and developed by **Sadeq Kiumarsi** in **2026**.
+Designed and developed by **[Sadeq Kiumarsi](https://github.com/mehmed18q)** in **2026**.
+
+Project repository: **[github.com/mehmed18q/Translator](https://github.com/mehmed18q/Translator)**
