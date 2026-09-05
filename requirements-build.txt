@@ -1,0 +1,4 @@
+-r requirements.txt
+
+PyInstaller>=6.10,<7
+Pillow>=10,<13

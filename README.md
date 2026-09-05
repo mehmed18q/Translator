@@ -46,6 +46,31 @@ py -m venv .venv
 winget install Microsoft.msodbcsql.18
 ```
 
+## ساخت فایل مستقل Windows
+
+برای ساخت نسخه تک‌فایل GUI روی Windows، PowerShell را در ریشه پروژه باز کنید و اجرا کنید:
+
+```powershell
+.\build_windows.ps1
+```
+
+فایل نهایی در `dist\Translator.exe` ساخته می‌شود. این فایل Python و پکیج‌های
+`requests` و `pyodbc` را همراه خود دارد و روی سیستم مقصد نیازی به نصب Python یا
+اجرای `pip install` نیست. خود Microsoft ODBC Driver 18 سیستمی است و باید جداگانه
+روی Windows مقصد نصب باشد. برنامه هنگام شروع، نصب بودن این درایور را بررسی می‌کند
+و اگر پیدا نشود راهنمای نصب نمایش می‌دهد.
+
+شماره نسخه در `translator_app/__init__.py` نگهداری می‌شود و در عنوان پنجره و
+فوتر ثابت برنامه نمایش داده می‌شود. نسخه فعلی `0.2.0` است.
+
+در نسخه exe، فایل `.env` کنار `Translator.exe` ذخیره می‌شود و لاگ‌های ماندگار در
+پوشه `logs` کنار exe قرار می‌گیرند. برنامه را در پوشه‌ای بگذارید که کاربر اجازه
+نوشتن در آن را داشته باشد.
+
+همچنین workflow با نام `Build Windows executable` را می‌توان از بخش Actions در
+GitHub به‌صورت دستی اجرا کرد؛ artifact خروجی با نام `Translator-Windows-x64`
+قابل دانلود خواهد بود.
+
 ## تنظیم اتصال
 
 می‌توانید `.env.example` را به `.env` تبدیل کنید و مقادیر اتصال را تنظیم کنید، یا connection string کامل بدهید:

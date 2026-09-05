@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .env
 .venv/
+logs/
+
+.venv-build/
+build/
+dist/
+*.spec.bak

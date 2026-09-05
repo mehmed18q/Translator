@@ -24,6 +24,7 @@ from tkinter import (
 from tkinter import scrolledtext
 from tkinter import ttk
 
+from translator_app import __version__
 from translator_app.config import (
     RetrySettings,
     RuntimeConfig,
@@ -36,17 +37,21 @@ from translator_app.resx_service import (
     ResxTranslationConfig,
     ResxTranslationService,
 )
+from translator_app.runtime_paths import application_dir
 from translator_app.service import DatabaseTranslationService, ProgressSnapshot
 from translator_app.sqlserver import (
+    REQUIRED_ODBC_DRIVER,
     SqlServerLocalizationRepository,
     SqlServerSchemaReader,
     connect,
+    installed_odbc_drivers,
+    is_odbc_driver_available,
 )
 from translator_app.translators import create_translator
 from translator_app.translators.base import Translator
 
 
-ENV_PATH = Path(".env")
+ENV_PATH = application_dir() / ".env"
 APP_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "app_logo.png"
 BG_COLOR = "#f6f8fb"
 CARD_COLOR = "#ffffff"
@@ -63,6 +68,8 @@ GUI_LANGUAGE_NAMES = {
     5: "Chinese",
     6: "Russian",
 }
+APP_AUTHOR = "Sadeq Kiumarsi"
+APP_COPYRIGHT_YEAR = 2026
 
 
 class ScrollableFrame(ttk.Frame):
@@ -221,7 +228,7 @@ class ScanOnlyTranslator(Translator):
 class TranslatorGuiApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
-        self.root.title("SQL Server Localize Translator")
+        self.root.title(f"SQL Server Localize Translator v{__version__}")
         self.logo_image: PhotoImage | None = None
         self._set_window_icon()
         self.root.geometry("1120x780")
@@ -246,6 +253,7 @@ class TranslatorGuiApp:
         self._build_layout()
         maximize_window(self.root)
         self._poll_events()
+        self.root.after(350, self._warn_if_odbc_driver_missing)
 
     def _configure_style(self) -> None:
         self.root.option_add("*Font", "TkDefaultFont")
@@ -518,6 +526,48 @@ class TranslatorGuiApp:
         self._build_operation_tab()
         self._build_resources_tab()
         self._build_logs_tab()
+
+        footer = ttk.Frame(shell, style="App.TFrame")
+        footer.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        footer.columnconfigure(0, weight=1)
+        ttk.Separator(footer, orient="horizontal").grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            pady=(0, 8),
+        )
+        ttk.Label(
+            footer,
+            text=(
+                f"Created by {APP_AUTHOR}  |  {APP_COPYRIGHT_YEAR}  |  "
+                f"Version {__version__}"
+            ),
+            style="Muted.TLabel",
+            anchor="center",
+        ).grid(row=1, column=0, sticky="ew")
+
+    def _warn_if_odbc_driver_missing(self) -> None:
+        try:
+            drivers = installed_odbc_drivers()
+        except RuntimeError as exc:
+            self._show_warning("ODBC Driver", str(exc))
+            return
+
+        if is_odbc_driver_available(drivers):
+            return
+
+        detected = ", ".join(drivers) if drivers else "None"
+        self._show_warning(
+            "ODBC Driver Required",
+            (
+                f"{REQUIRED_ODBC_DRIVER} is not installed.\n\n"
+                "Install it before connecting to SQL Server, then restart this "
+                "application.\n\n"
+                "Install command:\n"
+                "winget install Microsoft.msodbcsql.18\n\n"
+                f"Detected ODBC drivers: {detected}"
+            ),
+        )
 
     def _build_settings_tab(self) -> None:
         self.settings_tab.columnconfigure(0, weight=1)

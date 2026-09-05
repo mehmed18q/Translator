@@ -6,12 +6,15 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
+from translator_app.runtime_paths import resolve_application_path
+
 
 def configure_logging(
     log_dir: Path,
     *,
     extra_handlers: Iterable[logging.Handler] = (),
 ) -> tuple[logging.Logger, Path]:
+    log_dir = resolve_application_path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = log_dir / f"translator_{datetime.now():%Y%m%d_%H%M%S}.log"
 

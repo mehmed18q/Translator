@@ -15,6 +15,7 @@ from translator_app.config import (
 )
 from translator_app.languages import format_language_options, get_language
 from translator_app.logging_config import configure_logging
+from translator_app.runtime_paths import application_dir
 from translator_app.service import DatabaseTranslationService
 from translator_app.sqlserver import (
     SqlServerLocalizationRepository,
@@ -25,7 +26,7 @@ from translator_app.translators import create_translator
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(Path(".env"))
+    load_dotenv(application_dir() / ".env")
     args = build_parser().parse_args(argv)
 
     try:
