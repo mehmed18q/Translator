@@ -61,7 +61,7 @@ The screenshots below were captured from the Linux build. The Windows executable
 The ready-to-run application is:
 
 ```text
-dist\Translator.exe
+output\Translator.exe
 ```
 
 To use it on another Windows x64 computer:
@@ -295,7 +295,7 @@ From Windows PowerShell in the project root:
 The script creates a Python 3.12 build environment when needed, installs build dependencies, runs the test suite, and packages the GUI with PyInstaller. The result is written to:
 
 ```text
-dist\Translator.exe
+output\Translator.exe
 ```
 
 The GitHub Actions workflow named **Build Windows executable** can also be started manually. It publishes the `Translator-Windows-x64` artifact after a successful test and build run.
