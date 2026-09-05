@@ -10,6 +10,11 @@ from xml.etree import ElementTree as ET
 
 from translator_app.config import RetrySettings
 from translator_app.languages import LanguageOption
+from translator_app.pause_control import (
+    CancelCallback,
+    PauseCallback,
+    wait_while_paused,
+)
 from translator_app.retry import run_with_retry
 from translator_app.service import calculate_percent, detect_text_format, format_progress
 from translator_app.translators.base import Translator
@@ -104,7 +109,6 @@ class ResxFilePlan:
 
 
 ResxProgressCallback = Callable[[ResxProgressSnapshot], None]
-CancelCallback = Callable[[], bool]
 
 
 class ResxTranslationService:
@@ -115,11 +119,13 @@ class ResxTranslationService:
         logger: logging.Logger,
         progress_callback: ResxProgressCallback | None = None,
         cancel_callback: CancelCallback | None = None,
+        pause_callback: PauseCallback | None = None,
     ) -> None:
         self.translator = translator
         self.logger = logger
         self.progress_callback = progress_callback
         self.cancel_callback = cancel_callback
+        self.pause_callback = pause_callback
         self._translation_cache: dict[tuple[str, str, str, str], str] = {}
 
     def run(self, config: ResxTranslationConfig) -> ResxTranslationSummary:
@@ -132,6 +138,9 @@ class ResxTranslationService:
         )
 
         summary = ResxTranslationSummary(discovered_files=len(config.base_file_names))
+        if self._should_stop():
+            self.logger.warning("RESX operation stopped before file discovery.")
+            return summary
         self._emit_progress(summary, phase="discovered", total_files=len(config.base_file_names))
 
         plans = self._prepare_files(config, summary)
@@ -172,7 +181,7 @@ class ResxTranslationService:
         selected_files = tuple(dict.fromkeys(clean_base_file_name(name) for name in config.base_file_names))
 
         for file_index, base_file_name in enumerate(selected_files, start=1):
-            if self._is_cancelled():
+            if self._should_stop():
                 self.logger.warning("RESX operation stopped during preparation.")
                 break
 
@@ -261,7 +270,7 @@ class ResxTranslationService:
         summary: ResxTranslationSummary,
     ) -> None:
         for file_index, plan in enumerate(plans, start=1):
-            if self._is_cancelled():
+            if self._should_stop():
                 self.logger.warning("RESX operation stopped before the next file.")
                 return
 
@@ -274,7 +283,7 @@ class ResxTranslationService:
 
             try:
                 for entry in plan.pending_entries:
-                    if self._is_cancelled():
+                    if self._should_stop():
                         self.logger.warning("RESX operation stopped by user request.")
                         return
 
@@ -412,6 +421,14 @@ class ResxTranslationService:
 
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())
+
+    def _should_stop(self) -> bool:
+        return wait_while_paused(
+            pause_callback=self.pause_callback,
+            cancel_callback=self.cancel_callback,
+            logger=self.logger,
+            operation_name="RESX translation",
+        ) or self._is_cancelled()
 
     def _emit_progress(
         self,

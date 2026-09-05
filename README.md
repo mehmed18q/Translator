@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.2.1" src="https://img.shields.io/badge/version-0.2.1-2563eb">
+  <img alt="Version 0.2.2" src="https://img.shields.io/badge/version-0.2.2-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="53 tests passing" src="https://img.shields.io/badge/tests-53%20passing-2ea44f">
+  <img alt="59 tests passing" src="https://img.shields.io/badge/tests-59%20passing-2ea44f">
 </p>
 
 <p align="center">
-  <strong>Version 0.2.1</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 0.2.2</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -50,7 +50,8 @@ The screenshots below were captured from the Linux build. The Windows executable
 - Never overwrites a populated translation.
 - Dry-run mode is enabled by default for safer review.
 - RESX scanning, creation, and translation with existing values preserved.
-- Live progress, stop controls, retries, translation caching, and detailed logs.
+- Separate Pause/Resume and permanent Stop controls for database and RESX jobs.
+- Live progress, retries, translation caching, and detailed logs.
 - LibreTranslate and Google Free translation providers.
 - Persistent settings and logs beside the packaged executable.
 - Startup detection for Microsoft ODBC Driver 18.
@@ -59,9 +60,10 @@ The screenshots below were captured from the Linux build. The Windows executable
 
 ## Windows executable
 
-The ready-to-run application is:
+The ready-to-run application is produced in both distribution locations:
 
 ```text
+dist\Translator.exe
 output\Translator.exe
 ```
 
@@ -107,15 +109,26 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 | Tab | Purpose |
 |---|---|
 | `Connection` | Configure and test SQL Server, select the translation provider, set retry/runtime options, and save settings. |
-| `Operation` | Select source and target languages, filter by schema/table, run a test table, or process all eligible tables. |
-| `Resources` | Scan or translate `.resx` files, choose standard or extra resource names, and review file-level progress. |
+| `Operation` | Select source and target languages, filter by schema/table, process eligible tables, and pause, resume, or stop the active database job. |
+| `Resources` | Scan or translate `.resx` files, review progress, and pause, resume, or stop the active resource job. |
 | `Logs` | Follow the current operation in real time and clear the on-screen log view. Clearing the view does not delete the log file. |
 
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 0.2.1 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 0.2.2 | GitHub
 ```
+
+## Pause, resume, and stop
+
+Database and RESX operations provide two distinct controls:
+
+- **Pause** finishes the row or resource key currently being handled, then keeps the same worker, connection, progress counters, and in-memory translation cache waiting. The button changes to **Resume**; selecting it continues from the next pending item without restarting the job.
+- **Stop** permanently ends the current job. A stopped job cannot be resumed with the Resume button; start a new run if more work remains.
+
+The application must remain open while a job is paused. An HTTP request or database command already in progress is allowed to finish before the pause checkpoint is reached. Pressing Stop while paused immediately releases the paused worker and ends the job safely.
+
+Completed SQL rows and RESX file changes are not rolled back when Stop is selected. A later run discovers the remaining work and preserves destination values that were already written. Pause, resume, and stop transitions are recorded in the operation log.
 
 ## Safe translation behavior
 
@@ -321,14 +334,14 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **53 tests**.
+The current release passes **59 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

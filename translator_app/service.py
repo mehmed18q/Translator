@@ -11,6 +11,11 @@ from translator_app.models import (
     TableTranslationPlan,
     build_table_translation_plan,
 )
+from translator_app.pause_control import (
+    CancelCallback,
+    PauseCallback,
+    wait_while_paused,
+)
 from translator_app.retry import run_with_retry
 from translator_app.sqlserver.repository import (
     TARGET_EXISTS_COLUMN_NAME,
@@ -58,7 +63,6 @@ class ProgressSnapshot:
 
 
 ProgressCallback = Callable[[ProgressSnapshot], None]
-CancelCallback = Callable[[], bool]
 HTML_COLUMN_NAMES = {"htmlcontent"}
 HTML_PATTERN = re.compile(
     r"</?[a-zA-Z][a-zA-Z0-9:-]*(?:\s+[^<>]*)?>|&(?:[a-zA-Z]+|#[0-9]+|#x[0-9a-fA-F]+);"
@@ -75,6 +79,7 @@ class DatabaseTranslationService:
         logger: logging.Logger,
         progress_callback: ProgressCallback | None = None,
         cancel_callback: CancelCallback | None = None,
+        pause_callback: PauseCallback | None = None,
     ) -> None:
         self.schema_reader = schema_reader
         self.repository = repository
@@ -83,6 +88,7 @@ class DatabaseTranslationService:
         self._translation_cache: dict[tuple[str, str, str], str] = {}
         self.progress_callback = progress_callback
         self.cancel_callback = cancel_callback
+        self.pause_callback = pause_callback
 
     def run(self, config: RuntimeConfig) -> TranslationSummary:
         self.logger.info(
@@ -92,11 +98,16 @@ class DatabaseTranslationService:
             "dry-run" if config.dry_run else "execute",
         )
 
+        summary = TranslationSummary()
+        if self._should_stop():
+            self.logger.warning("Operation stopped before table discovery.")
+            return summary
+
         tables = self.schema_reader.get_localize_tables(
             schema_name=config.schema_name,
             table_name=config.table_name,
         )
-        summary = TranslationSummary(discovered_tables=len(tables))
+        summary.discovered_tables = len(tables)
         self._emit_progress(summary, phase="discovered", total_tables=len(tables))
 
         if not tables:
@@ -139,7 +150,7 @@ class DatabaseTranslationService:
         planned_tables: list[tuple[TableTranslationPlan, int]] = []
 
         for table in tables:
-            if self._is_cancelled():
+            if self._should_stop():
                 self.logger.warning("Operation stopped during preparation.")
                 break
 
@@ -202,7 +213,7 @@ class DatabaseTranslationService:
         summary: TranslationSummary,
     ) -> None:
         for table_index, (plan, pending_count) in enumerate(planned_tables, start=1):
-            if self._is_cancelled():
+            if self._should_stop():
                 self.logger.warning("Operation stopped before the next table.")
                 return
 
@@ -237,7 +248,7 @@ class DatabaseTranslationService:
                     target_language_id=config.target_language.id,
                     batch_size=config.batch_size,
                 ):
-                    if self._is_cancelled():
+                    if self._should_stop():
                         self.logger.warning("Operation stopped by user request.")
                         return
 
@@ -464,6 +475,14 @@ class DatabaseTranslationService:
 
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())
+
+    def _should_stop(self) -> bool:
+        return wait_while_paused(
+            pause_callback=self.pause_callback,
+            cancel_callback=self.cancel_callback,
+            logger=self.logger,
+            operation_name="Database translation",
+        ) or self._is_cancelled()
 
     def _emit_progress(
         self,

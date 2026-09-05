@@ -256,6 +256,7 @@ class TranslatorGuiApp:
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
+        self.pause_event = threading.Event()
         self.worker_thread: threading.Thread | None = None
         self.followup_config: RuntimeConfig | None = None
         self.running_job_name = ""
@@ -365,6 +366,30 @@ class TranslatorGuiApp:
         style.map(
             "Danger.TButton",
             background=[("active", "#b91c1c"), ("disabled", "#fca5a5")],
+            foreground=[("disabled", "#f8fafc")],
+        )
+        style.configure(
+            "Pause.TButton",
+            padding=(14, 8),
+            background="#f59e0b",
+            foreground="#ffffff",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        style.map(
+            "Pause.TButton",
+            background=[("active", "#d97706"), ("disabled", "#fcd34d")],
+            foreground=[("disabled", "#f8fafc")],
+        )
+        style.configure(
+            "Resume.TButton",
+            padding=(14, 8),
+            background="#16a34a",
+            foreground="#ffffff",
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        style.map(
+            "Resume.TButton",
+            background=[("active", "#15803d"), ("disabled", "#86efac")],
             foreground=[("disabled", "#f8fafc")],
         )
         style.configure("Horizontal.TProgressbar", thickness=12)
@@ -816,6 +841,15 @@ class TranslatorGuiApp:
         )
         self.run_all_button.grid(row=0, column=2, padx=(0, 8))
 
+        self.pause_button = ttk.Button(
+            buttons,
+            text="Pause",
+            command=self.toggle_pause,
+            state="disabled",
+            style="Pause.TButton",
+        )
+        self.pause_button.grid(row=0, column=3, padx=(0, 8))
+
         self.stop_button = ttk.Button(
             buttons,
             text="Stop",
@@ -823,7 +857,7 @@ class TranslatorGuiApp:
             state="disabled",
             style="Danger.TButton",
         )
-        self.stop_button.grid(row=0, column=3)
+        self.stop_button.grid(row=0, column=4)
 
         progress = ttk.LabelFrame(
             self.operation_tab,
@@ -1011,7 +1045,7 @@ class TranslatorGuiApp:
 
         buttons = ttk.Frame(self.resources_tab, style="App.TFrame")
         buttons.grid(row=1, column=0, sticky="ew", pady=(12, 12))
-        buttons.columnconfigure(3, weight=1)
+        buttons.columnconfigure(4, weight=1)
 
         self.resx_scan_button = ttk.Button(
             buttons,
@@ -1028,6 +1062,15 @@ class TranslatorGuiApp:
         )
         self.resx_run_button.grid(row=0, column=1, padx=(0, 8))
 
+        self.resx_pause_button = ttk.Button(
+            buttons,
+            text="Pause",
+            command=self.toggle_pause,
+            state="disabled",
+            style="Pause.TButton",
+        )
+        self.resx_pause_button.grid(row=0, column=2, padx=(0, 8))
+
         self.resx_stop_button = ttk.Button(
             buttons,
             text="Stop",
@@ -1035,7 +1078,7 @@ class TranslatorGuiApp:
             state="disabled",
             style="Danger.TButton",
         )
-        self.resx_stop_button.grid(row=0, column=2)
+        self.resx_stop_button.grid(row=0, column=3)
 
         progress = ttk.LabelFrame(
             self.resources_tab,
@@ -1363,6 +1406,7 @@ class TranslatorGuiApp:
 
         self.running_job_name = job_name
         self.cancel_event.clear()
+        self.pause_event.clear()
         self._reset_resx_progress()
         self._start_resx_timing()
         self._set_running(True)
@@ -1403,6 +1447,7 @@ class TranslatorGuiApp:
                     ("resx-progress", snapshot)
                 ),
                 cancel_callback=self.cancel_event.is_set,
+                pause_callback=self.pause_event.is_set,
             )
             summary = service.run(resx_config)
             self.events.put(("job-done", (job_name, summary, str(log_file))))
@@ -1499,6 +1544,7 @@ class TranslatorGuiApp:
 
         self.running_job_name = job_name
         self.cancel_event.clear()
+        self.pause_event.clear()
         self._reset_progress()
         self._start_operation_timing()
         self._set_running(True)
@@ -1543,6 +1589,7 @@ class TranslatorGuiApp:
                     ("progress", snapshot)
                 ),
                 cancel_callback=self.cancel_event.is_set,
+                pause_callback=self.pause_event.is_set,
             )
             summary = service.run(config)
             self.events.put(("job-done", (job_name, summary, str(log_file))))
@@ -1571,9 +1618,53 @@ class TranslatorGuiApp:
         if not self._is_worker_running():
             return
         self.cancel_event.set()
-        self.status_var.set("Stop requested...")
-        self.resx_status_var.set("Stop requested...")
-        self._append_log("Stop requested. The current row will finish before the job stops.")
+        self._set_active_job_status("Stop requested...")
+        for button_name in (
+            "pause_button",
+            "resx_pause_button",
+            "stop_button",
+            "resx_stop_button",
+        ):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.configure(state="disabled")
+        self._append_log(
+            "Stop requested. The current row or resource key will finish before "
+            "the job stops."
+        )
+
+    def toggle_pause(self) -> None:
+        if not self._is_worker_running() or self.cancel_event.is_set():
+            return
+
+        if self.pause_event.is_set():
+            self.pause_event.clear()
+            self._set_pause_controls(paused=False)
+            self._set_active_job_status("Resuming...")
+            self._append_log("Resume requested. Continuing the current job.")
+            return
+
+        self.pause_event.set()
+        self._set_pause_controls(paused=True)
+        self._set_active_job_status("Pause requested...")
+        self._append_log(
+            "Pause requested. The current row or resource key will finish, then "
+            "the job will wait for Resume."
+        )
+
+    def _set_active_job_status(self, status: str) -> None:
+        if self.running_job_name.startswith("resx-"):
+            self.resx_status_var.set(status)
+        else:
+            self.status_var.set(status)
+
+    def _set_pause_controls(self, *, paused: bool) -> None:
+        text = "Resume" if paused else "Pause"
+        style = "Resume.TButton" if paused else "Pause.TButton"
+        for button_name in ("pause_button", "resx_pause_button"):
+            button = getattr(self, button_name, None)
+            if button is not None:
+                button.configure(text=text, style=style)
 
     def _build_runtime_config(
         self,
@@ -1852,7 +1943,12 @@ class TranslatorGuiApp:
         if not isinstance(snapshot, ProgressSnapshot):
             return
 
-        self.status_var.set(phase_label(snapshot.phase))
+        if self.cancel_event.is_set():
+            self.status_var.set("Stop requested...")
+        elif self.pause_event.is_set():
+            self.status_var.set("Paused")
+        else:
+            self.status_var.set(phase_label(snapshot.phase))
         self.current_table_var.set(snapshot.current_table or "-")
         self.overall_progress["value"] = snapshot.percent
         self.table_progress["value"] = snapshot.table_percent
@@ -1876,7 +1972,12 @@ class TranslatorGuiApp:
         if not isinstance(snapshot, ResxProgressSnapshot):
             return
 
-        self.resx_status_var.set(resx_phase_label(snapshot.phase))
+        if self.cancel_event.is_set():
+            self.resx_status_var.set("Stop requested...")
+        elif self.pause_event.is_set():
+            self.resx_status_var.set("Paused")
+        else:
+            self.resx_status_var.set(resx_phase_label(snapshot.phase))
         self.resx_current_file_var.set(snapshot.current_file or "-")
         self.resx_current_key_var.set(snapshot.current_key or "-")
         self.resx_overall_progress["value"] = snapshot.percent
@@ -1908,15 +2009,17 @@ class TranslatorGuiApp:
         summary: object,
         log_file: str,
     ) -> None:
+        stopped = self.cancel_event.is_set()
         self._set_running(False)
         self._finish_resx_timing()
-        self.resx_status_var.set("Finished")
+        self.resx_status_var.set("Stopped" if stopped else "Finished")
         self.resx_log_file_var.set(log_file)
-        self._append_log(f"Job finished: {job_name}")
 
-        if self.cancel_event.is_set():
-            self._append_log("Job ended after a stop request.")
+        if stopped:
+            self._append_log(f"Job stopped: {job_name}")
             return
+
+        self._append_log(f"Job finished: {job_name}")
 
         translated = getattr(summary, "translated_entries", 0)
         skipped_existing = getattr(summary, "skipped_existing_entries", 0)
@@ -1939,15 +2042,17 @@ class TranslatorGuiApp:
         summary: object,
         log_file: str,
     ) -> None:
+        stopped = self.cancel_event.is_set()
         self._set_running(False)
         self._finish_operation_timing()
-        self.status_var.set("Finished")
+        self.status_var.set("Stopped" if stopped else "Finished")
         self.log_file_var.set(log_file)
-        self._append_log(f"Job finished: {job_name}")
 
-        if self.cancel_event.is_set():
-            self._append_log("Job ended after a stop request.")
+        if stopped:
+            self._append_log(f"Job stopped: {job_name}")
             return
+
+        self._append_log(f"Job finished: {job_name}")
 
         if job_name != "test-then-prompt" or self.followup_config is None:
             return
@@ -2157,11 +2262,30 @@ class TranslatorGuiApp:
             if button is not None:
                 button.configure(state=state)
 
-        stop_state = "normal" if running else "disabled"
-        for button_name in ("stop_button", "resx_stop_button"):
+        for button_name in (
+            "pause_button",
+            "resx_pause_button",
+            "stop_button",
+            "resx_stop_button",
+        ):
             button = getattr(self, button_name, None)
             if button is not None:
-                button.configure(state=stop_state)
+                button.configure(state="disabled")
+
+        if running:
+            active_controls = (
+                ("resx_pause_button", "resx_stop_button")
+                if self.running_job_name.startswith("resx-")
+                else ("pause_button", "stop_button")
+            )
+            for button_name in active_controls:
+                button = getattr(self, button_name, None)
+                if button is not None:
+                    button.configure(state="normal")
+
+        if not running:
+            self.pause_event.clear()
+            self._set_pause_controls(paused=False)
 
     def _is_worker_running(self) -> bool:
         return bool(self.worker_thread and self.worker_thread.is_alive())
