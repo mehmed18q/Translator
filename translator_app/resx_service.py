@@ -9,6 +9,7 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from translator_app.config import RetrySettings
+from translator_app.html_content import validate_or_repair_html_translation
 from translator_app.languages import LanguageOption
 from translator_app.pause_control import (
     CancelCallback,
@@ -293,7 +294,11 @@ class ResxTranslationService:
                             summary.skipped_existing_entries += 1
                             status = "skipped-existing"
                         else:
-                            translated_value = self._translate_entry(entry, config)
+                            translated_value = self._translate_entry(
+                                entry,
+                                config,
+                                plan.base_file_name,
+                            )
                             target_root.append(clone_entry_with_value(entry, translated_value))
                             target_keys.add(entry.key)
                             summary.translated_entries += 1
@@ -382,6 +387,7 @@ class ResxTranslationService:
         self,
         entry: ResxEntry,
         config: ResxTranslationConfig,
+        base_file_name: str,
     ) -> str:
         text_format = detect_text_format(entry.key, entry.value)
         cache_key = (
@@ -416,8 +422,66 @@ class ResxTranslationService:
                     entry.key,
                     ", ".join(missing_placeholders),
                 )
+
+            if text_format == "html":
+                html_result = validate_or_repair_html_translation(
+                    entry.value,
+                    restored_value,
+                    translate_text=lambda text: self._translate_html_repair_text(
+                        text,
+                        entry,
+                        config,
+                    ),
+                )
+                restored_value = html_result.value
+                if html_result.repaired:
+                    self.logger.warning(
+                        "HTML response repaired | RESX file=%s | key=%s | reason=%s",
+                        base_file_name,
+                        entry.key,
+                        html_result.reason or "HTML normalized",
+                    )
+                else:
+                    self.logger.info(
+                        "HTML response validated | RESX file=%s | key=%s | structure=preserved",
+                        base_file_name,
+                        entry.key,
+                    )
             self._translation_cache[cache_key] = restored_value
         return self._translation_cache[cache_key]
+
+    def _translate_html_repair_text(
+        self,
+        text: str,
+        entry: ResxEntry,
+        config: ResxTranslationConfig,
+    ) -> str:
+        cache_key = (
+            config.source_language.code,
+            config.target_language.code,
+            "html-repair-text",
+            text,
+        )
+        if cache_key in self._translation_cache:
+            return self._translation_cache[cache_key]
+
+        protected_text, placeholders = protect_format_placeholders(text)
+        translated_text = run_with_retry(
+            lambda: self.translator.translate(
+                protected_text,
+                config.source_language.code,
+                config.target_language.code,
+                text_format="text",
+            ),
+            operation_name=f"repair HTML in RESX key {entry.key}",
+            attempts=config.retry.attempts,
+            initial_delay_seconds=config.retry.initial_delay_seconds,
+            backoff_factor=config.retry.backoff_factor,
+            logger=self.logger,
+        )
+        restored_text = restore_format_placeholders(translated_text, placeholders)
+        self._translation_cache[cache_key] = restored_text
+        return restored_text
 
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())

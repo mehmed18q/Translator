@@ -27,5 +27,11 @@ if (-not (Test-Path $ExePath)) {
     throw "Build finished without creating $ExePath"
 }
 
+$OutputDir = Join-Path $ProjectRoot "output"
+$OutputExePath = Join-Path $OutputDir "Translator.exe"
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+Copy-Item -Force $ExePath $OutputExePath
+
 $Exe = Get-Item $ExePath
 Write-Host "Created $($Exe.FullName) ($([math]::Round($Exe.Length / 1MB, 1)) MB)"
+Write-Host "Copied to $OutputExePath"

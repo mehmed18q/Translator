@@ -99,6 +99,29 @@ class ResxServiceTests(unittest.TestCase):
 
             self.assertEqual(translator.calls[0][3], "html")
 
+    def test_repairs_and_logs_broken_html_resx_response(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resource_dir = Path(temp_dir)
+            write_resx(
+                resource_dir / "Resources.fa.resx",
+                {"HtmlBody": "<p>Hello</p>"},
+            )
+
+            translator = FakeTranslator()
+            service = build_service(translator)
+            with self.assertLogs("test_resx_service", level="WARNING") as captured:
+                service.run(build_config(resource_dir, ("Resources.resx",), 1, 2))
+
+            translated = read_resx_values(resource_dir / "Resources.resx")["HtmlBody"]
+            self.assertEqual(translated, "<p>Hello [en]</p>")
+            repair_log = next(
+                message
+                for message in captured.output
+                if "HTML response repaired" in message
+            )
+            self.assertIn("file=Resources.resx", repair_log)
+            self.assertIn("key=HtmlBody", repair_log)
+
     def test_preserves_format_placeholders(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             resource_dir = Path(temp_dir)

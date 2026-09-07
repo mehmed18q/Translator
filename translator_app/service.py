@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from translator_app.config import RuntimeConfig
+from translator_app.html_content import validate_or_repair_html_translation
 from translator_app.models import (
     LocalizeTable,
     TableTranslationPlan,
@@ -85,7 +86,7 @@ class DatabaseTranslationService:
         self.repository = repository
         self.translator = translator
         self.logger = logger
-        self._translation_cache: dict[tuple[str, str, str], str] = {}
+        self._translation_cache: dict[tuple[str, str, str, str], str] = {}
         self.progress_callback = progress_callback
         self.cancel_callback = cancel_callback
         self.pause_callback = pause_callback
@@ -433,22 +434,79 @@ class DatabaseTranslationService:
                 original_text,
             )
             if cache_key not in self._translation_cache:
-                self._translation_cache[cache_key] = run_with_retry(
-                    lambda text=original_text: self.translator.translate(
-                        text,
-                        config.source_language.code,
-                        config.target_language.code,
-                        text_format=text_format,
-                    ),
+                self._translation_cache[cache_key] = self._translate_value(
+                    original_text,
+                    config,
+                    text_format=text_format,
                     operation_name=f"translate column {column_name} ({text_format})",
-                    attempts=config.retry.attempts,
-                    initial_delay_seconds=config.retry.initial_delay_seconds,
-                    backoff_factor=config.retry.backoff_factor,
-                    logger=self.logger,
                 )
+
+            if text_format == "html":
+                row_identifier = format_entity_key_values(
+                    self._entity_key_values(plan, source_row)
+                )
+                html_result = validate_or_repair_html_translation(
+                    original_text,
+                    self._translation_cache[cache_key],
+                    translate_text=lambda text: self._translate_value(
+                        text,
+                        config,
+                        text_format="text",
+                        operation_name=(
+                            f"repair HTML text in {plan.table.display_name}."
+                            f"{column_name}"
+                        ),
+                    ),
+                )
+                self._translation_cache[cache_key] = html_result.value
+                if html_result.repaired:
+                    self.logger.warning(
+                        "HTML response repaired | table=%s | column=%s | row=%s | reason=%s",
+                        plan.table.display_name,
+                        column_name,
+                        row_identifier,
+                        html_result.reason or "HTML normalized",
+                    )
+                else:
+                    self.logger.info(
+                        "HTML response validated | table=%s | column=%s | row=%s | structure=preserved",
+                        plan.table.display_name,
+                        column_name,
+                        row_identifier,
+                    )
             translated_values[column_name] = self._translation_cache[cache_key]
 
         return translated_values
+
+    def _translate_value(
+        self,
+        text: str,
+        config: RuntimeConfig,
+        *,
+        text_format: str,
+        operation_name: str,
+    ) -> str:
+        cache_key = (
+            config.source_language.code,
+            config.target_language.code,
+            text_format,
+            text,
+        )
+        if cache_key not in self._translation_cache:
+            self._translation_cache[cache_key] = run_with_retry(
+                lambda: self.translator.translate(
+                    text,
+                    config.source_language.code,
+                    config.target_language.code,
+                    text_format=text_format,
+                ),
+                operation_name=operation_name,
+                attempts=config.retry.attempts,
+                initial_delay_seconds=config.retry.initial_delay_seconds,
+                backoff_factor=config.retry.backoff_factor,
+                logger=self.logger,
+            )
+        return self._translation_cache[cache_key]
 
     def _missing_target_text_columns(
         self,
