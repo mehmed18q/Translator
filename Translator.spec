@@ -5,6 +5,7 @@ from pathlib import Path
 
 project_root = Path(SPECPATH)
 logo_path = project_root / "translator_app" / "assets" / "app_logo.png"
+readme_path = project_root / "README.md"
 
 analysis = Analysis(
     [str(project_root / "main.py")],
@@ -14,6 +15,10 @@ analysis = Analysis(
         (
             str(logo_path),
             "translator_app/assets",
+        ),
+        (
+            str(readme_path),
+            ".",
         ),
     ],
     hiddenimports=[

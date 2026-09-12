@@ -47,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
                     read_connection,
                     write_connection,
                 ),
-                translator=create_translator(config),
+                translator=create_translator(config, logger=logger),
                 logger=logger,
             )
             run_requested_mode(service, config, args, logger)
@@ -129,8 +129,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--execute", action="store_true", help="Insert translated rows.")
     parser.add_argument(
         "--provider",
-        choices=("google-free", "libretranslate"),
-        default=os.getenv("TRANSLATOR_PROVIDER", "google-free"),
+        choices=("auto", "google-free", "libretranslate"),
+        default="auto",
+        help=(
+            "Legacy override. The default uses Google first and switches to "
+            "LibreTranslate after a Google rate-limit/quota response."
+        ),
     )
     parser.add_argument("--libretranslate-url", default=os.getenv("LIBRETRANSLATE_URL"))
     parser.add_argument(
@@ -205,7 +209,7 @@ def build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         table_name=table_name,
         batch_size=max(args.batch_size, 1),
         progress_every=max(args.progress_every, 1),
-        translator_provider=args.provider,
+        translator_provider=getattr(args, "provider", "auto"),
         request_timeout_seconds=max(args.request_timeout, 1),
         request_delay_seconds=max(args.request_delay, 0),
         libretranslate_url=args.libretranslate_url,

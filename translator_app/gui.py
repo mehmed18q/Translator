@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import queue
+import re
 import threading
 import time
 import traceback
 import urllib.error
 import urllib.request
 import webbrowser
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import (
@@ -33,11 +34,13 @@ from translator_app.config import (
 )
 from translator_app.languages import LANGUAGES, get_language
 from translator_app.logging_config import configure_logging
+from translator_app.models import build_table_translation_plan
 from translator_app.resx_service import (
     ResxProgressSnapshot,
     ResxTranslationConfig,
     ResxTranslationService,
 )
+from translator_app.retry import run_with_retry
 from translator_app.runtime_paths import application_dir
 from translator_app.service import DatabaseTranslationService, ProgressSnapshot
 from translator_app.sqlserver import (
@@ -87,6 +90,18 @@ GITHUB_ICON_PNG_BASE64 = (
     "IuAQbXiwt6EW1sfWu1ku4txb/aMU+bUqIZQmaaIHVfM+Y3+OY1aP3frHt+3bnA8p3JbcmEdeM"
     "CYWOVQQ6ywAAAABJRU5ErkJggg=="
 )
+README_PATH = Path(__file__).resolve().parent.parent / "README.md"
+
+
+@dataclass(frozen=True)
+class TableSelectionItem:
+    """One table shown in the all-table review dialog."""
+
+    display_name: str
+    text_characters: int = 0
+    pending_rows: int = 0
+    eligible: bool = True
+    reason: str | None = None
 
 
 class ScrollableFrame(ttk.Frame):
@@ -163,8 +178,22 @@ class ScrollableFrame(ttk.Frame):
     def _update_scroll_region(self, _event: object | None = None) -> None:
         requested_width = self.content.winfo_reqwidth()
         requested_height = self.content.winfo_reqheight()
-        content_width = max(requested_width, self.canvas.winfo_width())
-        content_height = max(requested_height, self.canvas.winfo_height())
+        canvas_width = max(self.canvas.winfo_width(), 1)
+        canvas_height = max(self.canvas.winfo_height(), 1)
+        needs_vertical_scroll = requested_height > canvas_height
+        needs_horizontal_scroll = requested_width > canvas_width
+
+        if needs_vertical_scroll:
+            self.vertical_scrollbar.grid()
+        else:
+            self.vertical_scrollbar.grid_remove()
+        if needs_horizontal_scroll:
+            self.horizontal_scrollbar.grid()
+        else:
+            self.horizontal_scrollbar.grid_remove()
+
+        content_width = max(requested_width, canvas_width)
+        content_height = max(requested_height, canvas_height)
         self.canvas.itemconfigure(
             self.content_window,
             width=content_width,
@@ -262,6 +291,10 @@ class TranslatorGuiApp:
         self.running_job_name = ""
         self.operation_started_monotonic: float | None = None
         self.resx_started_monotonic: float | None = None
+        self.operation_paused_started_monotonic: float | None = None
+        self.resx_paused_started_monotonic: float | None = None
+        self.operation_paused_total_seconds = 0.0
+        self.resx_paused_total_seconds = 0.0
         self.operation_last_processed_rows = 0
         self.operation_last_remaining_rows = 0
         self.resx_last_processed_entries = 0
@@ -450,9 +483,6 @@ class TranslatorGuiApp:
             value=parse_bool(env.get("SQLSERVER_TRUST_SERVER_CERTIFICATE", "true"))
         )
 
-        self.provider_var = StringVar(
-            value=env.get("TRANSLATOR_PROVIDER", "libretranslate")
-        )
         self.libretranslate_url_var = StringVar(
             value=env.get("LIBRETRANSLATE_URL", "http://127.0.0.1:5000")
         )
@@ -579,6 +609,7 @@ class TranslatorGuiApp:
         self.settings_scroll = ScrollableFrame(notebook)
         self.operation_scroll = ScrollableFrame(notebook)
         self.resources_scroll = ScrollableFrame(notebook)
+        self.readme_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
         self.settings_tab = self.settings_scroll.content
         self.operation_tab = self.operation_scroll.content
         self.resources_tab = self.resources_scroll.content
@@ -588,11 +619,13 @@ class TranslatorGuiApp:
         notebook.add(self.operation_scroll, text="Operation")
         notebook.add(self.resources_scroll, text="Resources")
         notebook.add(self.logs_tab, text="Logs")
+        notebook.add(self.readme_tab, text="ReadMe")
 
         self._build_settings_tab()
         self._build_operation_tab()
         self._build_resources_tab()
         self._build_logs_tab()
+        self._build_readme_tab()
 
         footer = ttk.Frame(shell, style="App.TFrame")
         footer.grid(row=2, column=0, sticky="ew", pady=(10, 0))
@@ -728,19 +761,17 @@ class TranslatorGuiApp:
         )
         translator_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(translator_frame, text="Provider", style="Field.TLabel").grid(
+        ttk.Label(
+            translator_frame,
+            text="Provider: Google → LibreTranslate (automatic fallback)",
+            style="Field.TLabel",
+        ).grid(
             row=0,
             column=0,
+            columnspan=2,
             sticky="w",
-            padx=(0, 8),
             pady=4,
         )
-        ttk.Combobox(
-            translator_frame,
-            textvariable=self.provider_var,
-            values=("libretranslate", "google-free"),
-            state="readonly",
-        ).grid(row=0, column=1, sticky="ew", pady=4)
         add_entry(translator_frame, 1, "Libre URL", self.libretranslate_url_var)
         add_entry(translator_frame, 2, "Libre API key", self.libretranslate_api_key_var)
         add_entry(translator_frame, 3, "Request timeout", self.request_timeout_var)
@@ -1231,6 +1262,7 @@ class TranslatorGuiApp:
             pady=12,
             font=("Consolas", 10),
         )
+        configure_auto_hide_text_scrollbar(self.log_text)
         self.log_text.bind("<Enter>", ScrollableFrame.clear_active)
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
@@ -1240,6 +1272,44 @@ class TranslatorGuiApp:
             row=0,
             column=0,
         )
+
+    def _build_readme_tab(self) -> None:
+        self.readme_tab.columnconfigure(0, weight=1)
+        self.readme_tab.rowconfigure(0, weight=1)
+        self.readme_tab.bind("<Enter>", ScrollableFrame.clear_active)
+
+        readme_text = scrolledtext.ScrolledText(
+            self.readme_tab,
+            width=110,
+            height=34,
+            wrap="word",
+            state="disabled",
+            bg="#ffffff",
+            fg=TEXT_COLOR,
+            insertbackground=TEXT_COLOR,
+            selectbackground="#bfdbfe",
+            relief="solid",
+            borderwidth=1,
+            padx=12,
+            pady=12,
+            font=("Consolas", 10),
+        )
+        readme_text.grid(row=0, column=0, sticky="nsew")
+        self.readme_text = readme_text
+        readme_text.bind("<Enter>", ScrollableFrame.clear_active)
+        configure_auto_hide_text_scrollbar(readme_text)
+        try:
+            readme_content = README_PATH.read_text(encoding="utf-8")
+        except OSError as exc:
+            readme_content = (
+                "ReadMe.md could not be loaded.\n\n"
+                f"Path: {README_PATH}\n"
+                f"Error: {exc}"
+            )
+        readme_text.configure(state="normal")
+        configure_readme_markdown_tags(readme_text)
+        render_markdown(readme_text, readme_content)
+        readme_text.configure(state="disabled")
 
     def _add_metric(
         self,
@@ -1438,7 +1508,7 @@ class TranslatorGuiApp:
             translator = (
                 ScanOnlyTranslator()
                 if resx_config.dry_run
-                else create_translator(translator_config)
+                else create_translator(translator_config, logger=logger)
             )
             service = ResxTranslationService(
                 translator=translator,
@@ -1517,6 +1587,10 @@ class TranslatorGuiApp:
         self._start_job("single-table", config)
 
     def start_all_tables(self) -> None:
+        if self._is_worker_running():
+            self._show_warning("Already Running", "Another operation is already running.")
+            return
+
         try:
             config = self._build_runtime_config(
                 schema_name=self.operation_schema_var.get(),
@@ -1526,8 +1600,336 @@ class TranslatorGuiApp:
             self._show_error("Settings Error", str(exc))
             return
 
+        self._last_table_selection_eligible = ()
+        selected_tables = self._choose_tables_for_all(config)
+        if selected_tables is None:
+            return
+
+        all_eligible_names = getattr(self, "_last_table_selection_eligible", ())
+        excluded_tables = tuple(
+            name for name in all_eligible_names if name not in selected_tables
+        )
+        config = replace(config, excluded_table_names=excluded_tables)
         self.followup_config = None
         self._start_job("all-tables", config)
+
+    def _choose_tables_for_all(self, config: RuntimeConfig) -> tuple[str, ...] | None:
+        """Show the sorted table review dialog and return checked tables.
+
+        Table metadata and character estimates are loaded in a worker thread so
+        opening the dialog never freezes the GUI while SQL Server is busy.
+        ``None`` means that the user cancelled the dialog or loading failed.
+        """
+
+        dialog = Toplevel(self.root)
+        dialog.title("Select Tables to Run")
+        dialog.configure(background=BG_COLOR)
+        dialog.geometry("780x600")
+        dialog.minsize(620, 420)
+        dialog.transient(self.root)
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(2, weight=1)
+
+        heading = ttk.Frame(dialog, padding=(16, 14, 16, 8), style="App.TFrame")
+        heading.grid(row=0, column=0, sticky="ew")
+        heading.columnconfigure(0, weight=1)
+        ttk.Label(
+            heading,
+            text="Select tables to translate",
+            style="Header.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            heading,
+            text=(
+                "Tables are ordered from the smallest pending text to the largest. "
+                "Checked tables will be translated."
+            ),
+            style="SubHeader.TLabel",
+            wraplength=740,
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+
+        status_var = StringVar(value="Loading table sizes…")
+        ttk.Label(
+            dialog,
+            textvariable=status_var,
+            style="Field.TLabel",
+        ).grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 8))
+
+        list_outer = ttk.Frame(dialog, padding=(16, 0, 16, 8), style="App.TFrame")
+        list_outer.grid(row=2, column=0, sticky="nsew")
+        list_outer.columnconfigure(0, weight=1)
+        list_outer.rowconfigure(0, weight=1)
+        table_canvas = Canvas(
+            list_outer,
+            background="#ffffff",
+            borderwidth=1,
+            highlightthickness=0,
+            relief="solid",
+        )
+        table_canvas.grid(row=0, column=0, sticky="nsew")
+        table_scrollbar = ttk.Scrollbar(
+            list_outer,
+            orient="vertical",
+            command=table_canvas.yview,
+        )
+        table_scrollbar.grid(row=0, column=1, sticky="ns")
+        table_canvas.configure(yscrollcommand=table_scrollbar.set)
+        table_rows = ttk.Frame(table_canvas, padding=8, style="App.TFrame")
+        table_window = table_canvas.create_window((0, 0), window=table_rows, anchor="nw")
+
+        def update_scroll_region(_event: object | None = None) -> None:
+            bounds = table_canvas.bbox("all")
+            if bounds is not None:
+                table_canvas.configure(scrollregion=bounds)
+            if table_rows.winfo_reqheight() > max(table_canvas.winfo_height(), 1):
+                table_scrollbar.grid()
+            else:
+                table_scrollbar.grid_remove()
+
+        def resize_rows(event: object) -> None:
+            table_canvas.itemconfigure(table_window, width=getattr(event, "width", 1))
+
+        table_rows.bind("<Configure>", update_scroll_region)
+        table_canvas.bind("<Configure>", resize_rows)
+
+        def update_table_scrollbar(*args: str) -> None:
+            table_scrollbar.set(*args)
+            try:
+                first, last = float(args[0]), float(args[1])
+            except (IndexError, ValueError):
+                return
+            if first <= 0.0 and last >= 1.0:
+                table_scrollbar.grid_remove()
+            else:
+                table_scrollbar.grid()
+
+        table_canvas.configure(yscrollcommand=update_table_scrollbar)
+        table_scrollbar.grid_remove()
+
+        button_frame = ttk.Frame(dialog, padding=(16, 0, 16, 14), style="App.TFrame")
+        button_frame.grid(row=3, column=0, sticky="ew")
+        button_frame.columnconfigure(0, weight=1)
+
+        selection_vars: dict[str, BooleanVar] = {}
+        eligible_names: tuple[str, ...] = ()
+        result: list[tuple[str, ...] | None] = [None]
+        loaded = [False]
+
+        def close_dialog() -> None:
+            if dialog.winfo_exists():
+                dialog.destroy()
+
+        def cancel() -> None:
+            result[0] = None
+            close_dialog()
+
+        def set_all(value: bool) -> None:
+            if not loaded[0]:
+                return
+            for variable in selection_vars.values():
+                variable.set(value)
+
+        def continue_with_selection() -> None:
+            if not loaded[0]:
+                return
+            selected = tuple(
+                name for name, variable in selection_vars.items() if variable.get()
+            )
+            if not selected:
+                status_var.set("Select at least one eligible table, or click Cancel.")
+                return
+            result[0] = selected
+            close_dialog()
+
+        select_all_button = ttk.Button(
+            button_frame,
+            text="Select all",
+            command=lambda: set_all(True),
+            state="disabled",
+        )
+        select_all_button.grid(row=0, column=0, sticky="w")
+        clear_all_button = ttk.Button(
+            button_frame,
+            text="Clear all",
+            command=lambda: set_all(False),
+            state="disabled",
+        )
+        clear_all_button.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Button(button_frame, text="Cancel", command=cancel).grid(
+            row=0,
+            column=2,
+            padx=(8, 0),
+        )
+        continue_button = ttk.Button(
+            button_frame,
+            text="Run selected",
+            command=continue_with_selection,
+            state="disabled",
+            style="Accent.TButton",
+        )
+        continue_button.grid(row=0, column=3, padx=(8, 0))
+
+        def populate(items: tuple[TableSelectionItem, ...]) -> None:
+            nonlocal eligible_names
+            if not dialog.winfo_exists():
+                return
+            for child in table_rows.winfo_children():
+                child.destroy()
+            selection_vars.clear()
+            eligible_names = tuple(item.display_name for item in items if item.eligible)
+            for index, item in enumerate(items, start=1):
+                variable = BooleanVar(value=item.eligible)
+                if item.eligible:
+                    selection_vars[item.display_name] = variable
+                suffix = (
+                    f"{item.text_characters:,} characters · "
+                    f"{item.pending_rows:,} pending rows"
+                )
+                if not item.eligible:
+                    suffix += f" · skipped: {item.reason or 'not eligible'}"
+                checkbutton = ttk.Checkbutton(
+                    table_rows,
+                    text=f"{index}. {item.display_name}    {suffix}",
+                    variable=variable,
+                    state="normal" if item.eligible else "disabled",
+                )
+                checkbutton.grid(row=index, column=0, sticky="ew", pady=2)
+            table_rows.columnconfigure(0, weight=1)
+            loaded[0] = True
+            status_var.set(
+                f"{len(items)} tables found · {len(eligible_names)} eligible · "
+                "checked tables will run"
+            )
+            select_all_button.configure(state="normal" if eligible_names else "disabled")
+            clear_all_button.configure(state="normal" if eligible_names else "disabled")
+            continue_button.configure(state="normal" if eligible_names else "disabled")
+            update_scroll_region()
+
+        def show_loading_error(error: Exception) -> None:
+            if not dialog.winfo_exists():
+                return
+            status_var.set(f"Could not load table list: {error}")
+            continue_button.configure(state="disabled")
+
+        def load_worker() -> None:
+            try:
+                items = self._load_table_selection_items(config)
+            except Exception as exc:
+                try:
+                    self.root.after(0, lambda exc=exc: show_loading_error(exc))
+                except TclError:
+                    pass
+                return
+            try:
+                self.root.after(0, lambda items=items: populate(items))
+            except TclError:
+                pass
+
+        def poll_mousewheel(event: object) -> str:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                table_canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+            return "break"
+
+        table_canvas.bind("<MouseWheel>", poll_mousewheel)
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.bind("<Escape>", lambda _event: cancel())
+        dialog.update_idletasks()
+        center_dialog(self.root, dialog)
+        try:
+            dialog.grab_set()
+        except TclError:
+            pass
+        dialog.focus_set()
+        threading.Thread(target=load_worker, daemon=True).start()
+        self.root.wait_window(dialog)
+        self._last_table_selection_eligible = eligible_names
+        return result[0]
+
+    def _load_table_selection_items(
+        self,
+        config: RuntimeConfig,
+    ) -> tuple[TableSelectionItem, ...]:
+        """Read the all-table preview data used by the selection modal."""
+
+        connection = connect(config.connection_string, autocommit=False)
+        try:
+            tables = SqlServerSchemaReader(connection).get_localize_tables(
+                schema_name=config.schema_name,
+                table_name=config.table_name,
+            )
+            repository = SqlServerLocalizationRepository(connection)
+            items: list[TableSelectionItem] = []
+            for table in tables:
+                try:
+                    plan = build_table_translation_plan(table)
+                    pending_rows = run_with_retry(
+                        lambda plan=plan: repository.count_pending_rows(
+                            plan,
+                            source_language_id=config.source_language.id,
+                            target_language_id=config.target_language.id,
+                        ),
+                        operation_name=f"count {table.display_name}",
+                        attempts=config.retry.attempts,
+                        initial_delay_seconds=config.retry.initial_delay_seconds,
+                        backoff_factor=config.retry.backoff_factor,
+                        logger=logging.getLogger("database_translator"),
+                    )
+                except Exception as exc:
+                    items.append(
+                        TableSelectionItem(
+                            display_name=table.display_name,
+                            eligible=False,
+                            reason=str(exc),
+                        )
+                    )
+                    continue
+
+                text_characters = 0
+                if pending_rows:
+                    try:
+                        text_characters = run_with_retry(
+                            lambda plan=plan: repository.count_pending_text_characters(
+                                plan,
+                                source_language_id=config.source_language.id,
+                                target_language_id=config.target_language.id,
+                            ),
+                            operation_name=f"measure text in {table.display_name}",
+                            attempts=config.retry.attempts,
+                            initial_delay_seconds=config.retry.initial_delay_seconds,
+                            backoff_factor=config.retry.backoff_factor,
+                            logger=logging.getLogger("database_translator"),
+                        )
+                    except Exception as exc:
+                        # Size is only used for ordering. Keep the table
+                        # selectable if the optional estimate is unavailable.
+                        logging.getLogger("database_translator").warning(
+                            "Could not measure text size for %s; using pending rows: %s",
+                            table.display_name,
+                            exc,
+                        )
+                        text_characters = pending_rows
+                items.append(
+                    TableSelectionItem(
+                        display_name=table.display_name,
+                        text_characters=max(int(text_characters), 0),
+                        pending_rows=max(int(pending_rows), 0),
+                    )
+                )
+        finally:
+            connection.close()
+
+        return tuple(
+            sorted(
+                items,
+                key=lambda item: (
+                    not item.eligible,
+                    item.text_characters if item.eligible else 0,
+                    item.pending_rows,
+                    item.display_name.casefold(),
+                ),
+            )
+        )
 
     def _start_job(self, job_name: str, config: RuntimeConfig) -> None:
         if self._is_worker_running():
@@ -1583,7 +1985,7 @@ class TranslatorGuiApp:
                     read_connection,
                     write_connection,
                 ),
-                translator=create_translator(config),
+                translator=create_translator(config, logger=logger),
                 logger=logger,
                 progress_callback=lambda snapshot: self.events.put(
                     ("progress", snapshot)
@@ -1638,12 +2040,14 @@ class TranslatorGuiApp:
             return
 
         if self.pause_event.is_set():
+            self._resume_timing()
             self.pause_event.clear()
             self._set_pause_controls(paused=False)
             self._set_active_job_status("Resuming...")
             self._append_log("Resume requested. Continuing the current job.")
             return
 
+        self._pause_timing()
         self.pause_event.set()
         self._set_pause_controls(paused=True)
         self._set_active_job_status("Pause requested...")
@@ -1657,6 +2061,35 @@ class TranslatorGuiApp:
             self.resx_status_var.set(status)
         else:
             self.status_var.set(status)
+
+    def _pause_timing(self) -> None:
+        prefix = "resx" if self.running_job_name.startswith("resx-") else "operation"
+        paused_name = f"{prefix}_paused_started_monotonic"
+        started_name = f"{prefix}_started_monotonic"
+        if getattr(self, started_name, None) is not None and getattr(self, paused_name, None) is None:
+            setattr(self, paused_name, time.monotonic())
+
+    def _resume_timing(self) -> None:
+        prefix = "resx" if self.running_job_name.startswith("resx-") else "operation"
+        paused_name = f"{prefix}_paused_started_monotonic"
+        total_name = f"{prefix}_paused_total_seconds"
+        paused_started = getattr(self, paused_name, None)
+        if paused_started is None:
+            return
+        paused_total = getattr(self, total_name, 0.0)
+        setattr(self, total_name, paused_total + max(time.monotonic() - paused_started, 0.0))
+        setattr(self, paused_name, None)
+
+    def _active_elapsed_seconds(self, prefix: str) -> float | None:
+        started = getattr(self, f"{prefix}_started_monotonic", None)
+        if started is None:
+            return None
+        now = time.monotonic()
+        paused_total = getattr(self, f"{prefix}_paused_total_seconds", 0.0)
+        paused_started = getattr(self, f"{prefix}_paused_started_monotonic", None)
+        if paused_started is not None:
+            paused_total += max(now - paused_started, 0.0)
+        return max(now - started - paused_total, 0.0)
 
     def _set_pause_controls(self, *, paused: bool) -> None:
         text = "Resume" if paused else "Pause"
@@ -1691,7 +2124,7 @@ class TranslatorGuiApp:
                 parse_int(self.progress_every_var.get(), "Progress every"),
                 1,
             ),
-            translator_provider=self.provider_var.get(),
+            translator_provider="auto",
             request_timeout_seconds=max(
                 parse_float(self.request_timeout_var.get(), "Request timeout"),
                 1,
@@ -1776,7 +2209,7 @@ class TranslatorGuiApp:
             table_name=None,
             batch_size=1,
             progress_every=resx_config.progress_every,
-            translator_provider=self.provider_var.get(),
+            translator_provider="auto",
             request_timeout_seconds=max(
                 parse_float(self.request_timeout_var.get(), "Request timeout"),
                 1,
@@ -1864,7 +2297,6 @@ class TranslatorGuiApp:
             "SQLSERVER_TRUST_SERVER_CERTIFICATE": bool_to_env(
                 self.trust_server_certificate_var.get()
             ),
-            "TRANSLATOR_PROVIDER": self.provider_var.get(),
             "LIBRETRANSLATE_URL": self.libretranslate_url_var.get().strip(),
             "LIBRETRANSLATE_API_KEY": self.libretranslate_api_key_var.get().strip(),
             "REQUEST_TIMEOUT_SECONDS": self.request_timeout_var.get().strip(),
@@ -2128,6 +2560,8 @@ class TranslatorGuiApp:
         self.operation_average_rate_var.set("-")
         self.operation_estimated_finish_var.set("-")
         self.operation_started_monotonic = None
+        self.operation_paused_started_monotonic = None
+        self.operation_paused_total_seconds = 0.0
         self.operation_last_processed_rows = 0
         self.operation_last_remaining_rows = 0
 
@@ -2158,6 +2592,8 @@ class TranslatorGuiApp:
         self.resx_average_rate_var.set("-")
         self.resx_estimated_finish_var.set("-")
         self.resx_started_monotonic = None
+        self.resx_paused_started_monotonic = None
+        self.resx_paused_total_seconds = 0.0
         self.resx_last_processed_entries = 0
         self.resx_last_remaining_entries = 0
 
@@ -2168,15 +2604,19 @@ class TranslatorGuiApp:
         self.operation_duration_var.set("00:00:00")
         self.operation_average_rate_var.set("-")
         self.operation_estimated_finish_var.set("-")
+        self.operation_paused_started_monotonic = None
+        self.operation_paused_total_seconds = 0.0
 
     def _finish_operation_timing(self) -> None:
         if self.operation_started_monotonic is None:
             return
-        elapsed_seconds = time.monotonic() - self.operation_started_monotonic
+        elapsed_seconds = self._active_elapsed_seconds("operation") or 0.0
         self.operation_finished_var.set(format_timestamp(datetime.now()))
         self.operation_duration_var.set(format_duration(elapsed_seconds))
-        self._refresh_operation_throughput(elapsed_seconds)
+        self._refresh_operation_throughput(elapsed_seconds, force=True)
         self.operation_started_monotonic = None
+        self.operation_paused_started_monotonic = None
+        self.operation_paused_total_seconds = 0.0
 
     def _start_resx_timing(self) -> None:
         self.resx_started_monotonic = time.monotonic()
@@ -2185,40 +2625,48 @@ class TranslatorGuiApp:
         self.resx_duration_var.set("00:00:00")
         self.resx_average_rate_var.set("-")
         self.resx_estimated_finish_var.set("-")
+        self.resx_paused_started_monotonic = None
+        self.resx_paused_total_seconds = 0.0
 
     def _finish_resx_timing(self) -> None:
         if self.resx_started_monotonic is None:
             return
-        elapsed_seconds = time.monotonic() - self.resx_started_monotonic
+        elapsed_seconds = self._active_elapsed_seconds("resx") or 0.0
         self.resx_finished_var.set(format_timestamp(datetime.now()))
         self.resx_duration_var.set(format_duration(elapsed_seconds))
-        self._refresh_resx_throughput(elapsed_seconds)
+        self._refresh_resx_throughput(elapsed_seconds, force=True)
         self.resx_started_monotonic = None
+        self.resx_paused_started_monotonic = None
+        self.resx_paused_total_seconds = 0.0
 
     def _refresh_running_duration(self) -> None:
         if not self._is_worker_running():
             return
 
         if self.running_job_name.startswith("resx-"):
-            if self.resx_started_monotonic is not None:
-                elapsed_seconds = time.monotonic() - self.resx_started_monotonic
+            elapsed_seconds = self._active_elapsed_seconds("resx")
+            if elapsed_seconds is not None:
                 self.resx_duration_var.set(format_duration(elapsed_seconds))
                 self._refresh_resx_throughput(elapsed_seconds)
             return
 
-        if self.operation_started_monotonic is not None:
-            elapsed_seconds = time.monotonic() - self.operation_started_monotonic
+        elapsed_seconds = self._active_elapsed_seconds("operation")
+        if elapsed_seconds is not None:
             self.operation_duration_var.set(format_duration(elapsed_seconds))
             self._refresh_operation_throughput(elapsed_seconds)
 
     def _refresh_operation_throughput(
         self,
         elapsed_seconds: float | None = None,
+        *,
+        force: bool = False,
     ) -> None:
+        if self.pause_event.is_set() and not force:
+            return
         if elapsed_seconds is None:
-            if self.operation_started_monotonic is None:
+            elapsed_seconds = self._active_elapsed_seconds("operation")
+            if elapsed_seconds is None:
                 return
-            elapsed_seconds = time.monotonic() - self.operation_started_monotonic
         self.operation_average_rate_var.set(
             format_average_rate(self.operation_last_processed_rows, elapsed_seconds)
         )
@@ -2233,11 +2681,15 @@ class TranslatorGuiApp:
     def _refresh_resx_throughput(
         self,
         elapsed_seconds: float | None = None,
+        *,
+        force: bool = False,
     ) -> None:
+        if self.pause_event.is_set() and not force:
+            return
         if elapsed_seconds is None:
-            if self.resx_started_monotonic is None:
+            elapsed_seconds = self._active_elapsed_seconds("resx")
+            if elapsed_seconds is None:
                 return
-            elapsed_seconds = time.monotonic() - self.resx_started_monotonic
         self.resx_average_rate_var.set(
             format_average_rate(self.resx_last_processed_entries, elapsed_seconds)
         )
@@ -2397,6 +2849,7 @@ def build_copyable_dialog(parent: Tk, title: str, message: str, kind: str) -> To
         pady=10,
         font=("TkDefaultFont", 10),
     )
+    configure_auto_hide_text_scrollbar(text)
     text.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 12))
     text.insert("1.0", message)
     text.configure(state="disabled")
@@ -2434,6 +2887,543 @@ def copy_to_clipboard(parent: Tk, text: str) -> None:
     parent.clipboard_clear()
     parent.clipboard_append(text)
     parent.update_idletasks()
+
+
+def configure_readme_markdown_tags(text_widget: object) -> None:
+    """Configure the visual styles used by the README Markdown renderer."""
+
+    # Keep the renderer dependency-free so the packaged executable does not need
+    # a separate Markdown package.  Text tags also work while the widget is
+    # disabled, which means links remain clickable after the README is loaded.
+    tag_configure = getattr(text_widget, "tag_configure")
+    tag_configure(
+        "readme-strong",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    tag_configure(
+        "readme-emphasis",
+        font=("TkDefaultFont", 10, "italic"),
+    )
+    tag_configure(
+        "readme-strikethrough",
+        overstrike=True,
+        foreground=MUTED_TEXT_COLOR,
+    )
+    tag_configure(
+        "readme-inline-code",
+        font=("TkFixedFont", 10),
+        background="#eef2f6",
+        foreground="#b42318",
+    )
+    tag_configure(
+        "readme-code-block",
+        font=("TkFixedFont", 10),
+        background="#101828",
+        foreground="#e4e7ec",
+        lmargin1=12,
+        lmargin2=12,
+        rmargin=12,
+    )
+    tag_configure(
+        "readme-blockquote",
+        foreground=MUTED_TEXT_COLOR,
+        lmargin1=18,
+        lmargin2=30,
+        rmargin=12,
+    )
+    tag_configure(
+        "readme-list",
+        lmargin1=18,
+        lmargin2=34,
+    )
+    tag_configure(
+        "readme-rule",
+        foreground="#98a2b3",
+        spacing1=6,
+        spacing3=6,
+    )
+    tag_configure(
+        "readme-table",
+        font=("TkFixedFont", 10),
+    )
+    tag_configure(
+        "readme-table-header",
+        font=("TkFixedFont", 10, "bold"),
+        foreground="#101828",
+    )
+    tag_configure(
+        "readme-link",
+        foreground="#175cd3",
+        underline=True,
+    )
+    tag_configure(
+        "readme-image",
+        foreground=MUTED_TEXT_COLOR,
+        font=("TkDefaultFont", 9, "italic"),
+    )
+    for level, size in enumerate((20, 17, 15, 13, 12, 11), start=1):
+        tag_configure(
+            f"readme-heading-{level}",
+            font=("TkDefaultFont", size, "bold"),
+            foreground="#101828",
+            spacing1=10 if level <= 2 else 7,
+            spacing3=5,
+        )
+
+
+def render_markdown(text_widget: object, markdown: str) -> None:
+    """Render a useful Markdown subset into a Tk ``Text``/``ScrolledText``.
+
+    The README is intentionally rendered without adding a runtime dependency.
+    Headings, lists, quotes, fenced code, tables, links, and the common inline
+    emphasis forms are supported.  Unsupported HTML is treated as formatting
+    instead of being shown as raw markup where practical.
+    """
+
+    widget = text_widget
+    widget.delete("1.0", "end")
+    # Keep PhotoImage instances alive for as long as the rendered README is
+    # visible.  Tk removes an image as soon as its Python object is collected.
+    try:
+        setattr(widget, "_readme_image_refs", [])
+    except Exception:
+        pass
+    lines = markdown.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    link_index = [0]
+    in_fence = False
+    fence_marker = ""
+    line_index = 0
+
+    while line_index < len(lines):
+        original_line = lines[line_index]
+        if in_fence:
+            closing_marker = _readme_fence_marker(original_line)
+            if closing_marker and closing_marker[0] == fence_marker:
+                in_fence = False
+                fence_marker = ""
+            else:
+                # Do not normalize HTML or Markdown inside a code block.
+                widget.insert("end", original_line + "\n", ("readme-code-block",))
+            line_index += 1
+            continue
+
+        line = _normalize_readme_html_line(original_line)
+        if line is None:
+            line_index += 1
+            continue
+
+        fence_marker_match = _readme_fence_marker(line)
+        if fence_marker_match:
+            in_fence = True
+            fence_marker = fence_marker_match[0]
+            line_index += 1
+            continue
+
+        table_end = _readme_table_end(lines, line_index)
+        if table_end is not None:
+            _render_readme_table(widget, lines[line_index:table_end], link_index)
+            line_index = table_end
+            continue
+
+        heading_match = re.match(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$", line)
+        if heading_match:
+            level = len(heading_match.group(1))
+            _insert_readme_inline(
+                widget,
+                heading_match.group(2),
+                (f"readme-heading-{level}",),
+                link_index,
+            )
+            widget.insert("end", "\n")
+            line_index += 1
+            continue
+
+        if _is_readme_horizontal_rule(line):
+            widget.insert("end", "────────────────────────────\n", ("readme-rule",))
+            line_index += 1
+            continue
+
+        quote_match = re.match(r"^\s*((?:>\s*)+)(.*)$", line)
+        if quote_match:
+            quote_depth = quote_match.group(1).count(">")
+            prefix = "│ " * max(quote_depth, 1)
+            widget.insert("end", prefix, ("readme-blockquote",))
+            _insert_readme_inline(
+                widget,
+                quote_match.group(2).strip(),
+                ("readme-blockquote",),
+                link_index,
+            )
+            widget.insert("end", "\n")
+            line_index += 1
+            continue
+
+        unordered_match = re.match(r"^(\s*)[-*+]\s+(.*)$", line)
+        ordered_match = re.match(r"^(\s*)\d+[.)]\s+(.*)$", line)
+        if unordered_match or ordered_match:
+            if unordered_match:
+                indentation, item = unordered_match.groups()
+                marker = "• "
+            else:
+                indentation = ordered_match.group(1)
+                item = ordered_match.group(2)
+                number_match = re.match(r"^\s*(\d+)[.)]", line)
+                marker = f"{number_match.group(1)}. " if number_match else "1. "
+            prefix = " " * min(len(indentation), 12) + marker
+            widget.insert("end", prefix, ("readme-list",))
+            _insert_readme_inline(widget, item, ("readme-list",), link_index)
+            widget.insert("end", "\n")
+            line_index += 1
+            continue
+
+        _insert_readme_inline(widget, line, (), link_index)
+        widget.insert("end", "\n")
+        line_index += 1
+
+
+def _insert_readme_inline(
+    text_widget: object,
+    value: str,
+    inherited_tags: tuple[str, ...],
+    link_index: list[int],
+) -> None:
+    """Insert inline Markdown while retaining block-level tag styling."""
+
+    token_pattern = re.compile(
+        r"(?P<image>!\[[^\]]*\]\([^)]*\))"
+        r"|(?P<link>\[[^\]]+\]\([^)]*\))"
+        r"|(?P<code>`[^`\n]+`)"
+        r"|(?P<strong>\*\*[^*\n]+\*\*|__[^_\n]+__)"
+        r"|(?P<strike>~~[^~\n]+~~)"
+        r"|(?P<emphasis>(?<!\*)\*[^*\n]+\*(?!\*)|(?<!_)_[^_\n]+_(?!_))"
+    )
+    position = 0
+    for match in token_pattern.finditer(value):
+        if match.start() > position:
+            _insert_readme_plain(
+                text_widget,
+                value[position : match.start()],
+                inherited_tags,
+            )
+
+        token = match.group(0)
+        kind = match.lastgroup
+        if kind == "image":
+            image_match = re.match(r"!\[([^]]*)\]\(([^)]*)\)", token)
+            if image_match:
+                alt_text, target = image_match.groups()
+                if not _insert_readme_image(text_widget, target):
+                    _insert_readme_link_or_text(
+                        text_widget,
+                        alt_text or "Image",
+                        target.strip(),
+                        inherited_tags + ("readme-image",),
+                        link_index,
+                    )
+        elif kind == "link":
+            link_match = re.match(r"\[([^]]+)\]\(([^)]*)\)", token)
+            if link_match:
+                label, target = link_match.groups()
+                target = target.strip().split(None, 1)[0] if target.strip() else ""
+                tag_name = f"readme-link-{link_index[0]}"
+                link_index[0] += 1
+                _configure_readme_link(text_widget, tag_name, target)
+                _insert_readme_inline(
+                    text_widget,
+                    label,
+                    inherited_tags + ("readme-link", tag_name),
+                    link_index,
+                )
+        elif kind == "code":
+            _insert_readme_plain(
+                text_widget,
+                token[1:-1],
+                inherited_tags + ("readme-inline-code",),
+            )
+        elif kind == "strong":
+            _insert_readme_inline(
+                text_widget,
+                token[2:-2],
+                inherited_tags + ("readme-strong",),
+                link_index,
+            )
+        elif kind == "strike":
+            _insert_readme_inline(
+                text_widget,
+                token[2:-2],
+                inherited_tags + ("readme-strikethrough",),
+                link_index,
+            )
+        elif kind == "emphasis":
+            _insert_readme_inline(
+                text_widget,
+                token[1:-1],
+                inherited_tags + ("readme-emphasis",),
+                link_index,
+            )
+        position = match.end()
+
+    if position < len(value):
+        _insert_readme_plain(text_widget, value[position:], inherited_tags)
+
+
+def _insert_readme_plain(
+    text_widget: object,
+    value: str,
+    tags: tuple[str, ...],
+) -> None:
+    # Markdown backslash escapes should display their escaped character only.
+    value = re.sub(r"\\([\\`*_{}\[\]()#+\-.!>])", r"\1", value)
+    text_widget.insert("end", value, tags)
+
+
+def _insert_readme_link_or_text(
+    text_widget: object,
+    label: str,
+    target: str,
+    inherited_tags: tuple[str, ...],
+    link_index: list[int],
+) -> None:
+    if not target:
+        _insert_readme_plain(text_widget, label, inherited_tags)
+        return
+    tag_name = f"readme-link-{link_index[0]}"
+    link_index[0] += 1
+    _configure_readme_link(text_widget, tag_name, target)
+    _insert_readme_plain(
+        text_widget,
+        label,
+        inherited_tags + ("readme-link", tag_name),
+    )
+
+
+def _insert_readme_image(
+    text_widget: object,
+    target: str,
+) -> bool:
+    """Insert a local README image when Tk can load it.
+
+    Remote images and images omitted from the packaged executable intentionally
+    fall back to their alt text, so rendering never depends on network access.
+    """
+
+    image_create = getattr(text_widget, "image_create", None)
+    if not callable(image_create):
+        return False
+
+    image_target = target.strip().split(None, 1)[0] if target.strip() else ""
+    if not image_target or re.match(r"^[a-z][a-z0-9+.-]*://", image_target, re.I):
+        return False
+
+    image_path = Path(image_target)
+    if not image_path.is_absolute():
+        image_path = README_PATH.parent / image_path
+    if not image_path.is_file():
+        return False
+
+    try:
+        image = PhotoImage(master=text_widget, file=str(image_path))
+        # The source logo is square and intentionally has a 170px display size
+        # in README.md.  Other local screenshots are kept readable but bounded.
+        max_width = 180 if image_path.name.lower() == "app_logo.png" else 720
+        image_width = int(image.width())
+        if image_width > max_width:
+            scale = max((image_width + max_width - 1) // max_width, 1)
+            image = image.subsample(scale, scale)
+
+        image_create("end", image=image, padx=2, pady=2)
+        image_refs = getattr(text_widget, "_readme_image_refs", None)
+        if image_refs is None:
+            image_refs = []
+            setattr(text_widget, "_readme_image_refs", image_refs)
+        image_refs.append(image)
+        return True
+    except (TclError, OSError, TypeError, ValueError):
+        return False
+
+
+def _configure_readme_link(text_widget: object, tag_name: str, target: str) -> None:
+    if not target:
+        return
+    text_widget.tag_bind(
+        tag_name,
+        "<Button-1>",
+        lambda _event, url=target: _open_readme_link(url),
+    )
+    text_widget.tag_bind(
+        tag_name,
+        "<Enter>",
+        lambda _event: text_widget.configure(cursor="hand2"),
+    )
+    text_widget.tag_bind(
+        tag_name,
+        "<Leave>",
+        lambda _event: text_widget.configure(cursor="xterm"),
+    )
+
+
+def _open_readme_link(target: str) -> str:
+    try:
+        webbrowser.open_new_tab(target)
+    except Exception:
+        pass
+    return "break"
+
+
+def _normalize_readme_html_line(line: str) -> str | None:
+    """Convert the small amount of HTML used by README into Markdown-like text."""
+
+    stripped = line.strip()
+    if re.fullmatch(r"</?(?:p|div|section|center)(?:\s[^>]*)?>", stripped, re.I):
+        return None
+
+    heading_match = re.fullmatch(
+        r"<h([1-6])(?:\s[^>]*)?>(.*?)</h\1>",
+        stripped,
+        re.I,
+    )
+    if heading_match:
+        return f"{'#' * int(heading_match.group(1))} {heading_match.group(2).strip()}"
+
+    image_match = re.fullmatch(r"<img\s+([^>]*)/?>", stripped, re.I)
+    if image_match:
+        attributes = image_match.group(1)
+        alt_match = re.search(r"\balt\s*=\s*['\"]([^'\"]*)['\"]", attributes, re.I)
+        src_match = re.search(r"\bsrc\s*=\s*['\"]([^'\"]*)['\"]", attributes, re.I)
+        alt_text = alt_match.group(1) if alt_match else "Image"
+        target = src_match.group(1) if src_match else ""
+        return f"![{alt_text}]({target})" if target else f"**{alt_text}**"
+
+    line = re.sub(
+        r"<a\s+[^>]*href\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</a>",
+        lambda match: f"[{match.group(2)}]({match.group(1)})",
+        line,
+        flags=re.I,
+    )
+    line = re.sub(r"<strong(?:\s[^>]*)?>(.*?)</strong>", r"**\1**", line, flags=re.I)
+    line = re.sub(r"<em(?:\s[^>]*)?>(.*?)</em>", r"*\1*", line, flags=re.I)
+    line = re.sub(r"<br\s*/?>", "  ", line, flags=re.I)
+    line = re.sub(r"</?(?:p|div|span|section|center)(?:\s[^>]*)?>", "", line, flags=re.I)
+    return line.strip()
+
+
+def _readme_table_end(lines: list[str], start: int) -> int | None:
+    if start + 1 >= len(lines):
+        return None
+    if not _looks_like_readme_table_row(lines[start]):
+        return None
+    if not _is_readme_table_separator(lines[start + 1]):
+        return None
+    end = start + 2
+    while end < len(lines) and _looks_like_readme_table_row(lines[end]):
+        end += 1
+    return end
+
+
+def _is_readme_horizontal_rule(line: str) -> bool:
+    value = line.strip()
+    return bool(re.fullmatch(r"(?:\*\s*){3,}|(?:-\s*){3,}|(?:_\s*){3,}", value))
+
+
+def _readme_fence_marker(line: str) -> str | None:
+    match = re.match(r"^\s*(`{3,}|~{3,})(?:\s*[^`]*)?$", line)
+    return match.group(1) if match else None
+
+
+def _looks_like_readme_table_row(line: str) -> bool:
+    return not line.strip().startswith("```") and line.count("|") >= 1
+
+
+def _is_readme_table_separator(line: str) -> bool:
+    cells = _split_readme_table_row(line)
+    return bool(cells) and all(
+        re.fullmatch(r":?-{3,}:?", cell.strip()) is not None for cell in cells
+    )
+
+
+def _split_readme_table_row(line: str) -> list[str]:
+    value = line.strip()
+    if value.startswith("|"):
+        value = value[1:]
+    if value.endswith("|") and not value.endswith("\\|"):
+        value = value[:-1]
+    return [cell.replace("\\|", "|").strip() for cell in re.split(r"(?<!\\)\|", value)]
+
+
+def _readme_plain_cell(value: str) -> str:
+    value = re.sub(r"!\[([^]]*)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"\[([^]]+)\]\([^)]*\)", r"\1", value)
+    value = re.sub(r"(`{1,3}|[*_~])", "", value)
+    return re.sub(r"\\([\\`*_{}\[\]()#+\-.!>])", r"\1", value).strip()
+
+
+def _render_readme_table(
+    text_widget: object,
+    source_lines: list[str],
+    link_index: list[int],
+) -> None:
+    rows = [_split_readme_table_row(line) for line in source_lines]
+    if len(rows) < 2:
+        return
+    separator = rows[1]
+    data_rows = [rows[0], *rows[2:]]
+    column_count = max(len(row) for row in data_rows)
+    for row in data_rows:
+        row.extend([""] * (column_count - len(row)))
+    alignments: list[str] = []
+    for cell in separator:
+        stripped = cell.strip()
+        if stripped.startswith(":") and stripped.endswith(":"):
+            alignments.append("center")
+        elif stripped.endswith(":"):
+            alignments.append("right")
+        else:
+            alignments.append("left")
+    alignments.extend(["left"] * (column_count - len(alignments)))
+    widths = [
+        max(3, max(len(_readme_plain_cell(row[column])) for row in data_rows))
+        for column in range(column_count)
+    ]
+
+    for row_index, row in enumerate(data_rows):
+        row_tag = ("readme-table-header",) if row_index == 0 else ("readme-table",)
+        for column, cell in enumerate(row):
+            plain_cell = _readme_plain_cell(cell)
+            width = widths[column]
+            alignment = alignments[column]
+            if alignment == "right":
+                padding = " " * max(width - len(plain_cell), 0)
+                cell = padding + cell
+            elif alignment == "center":
+                total_padding = max(width - len(plain_cell), 0)
+                left_padding = total_padding // 2
+                cell = " " * left_padding + cell + " " * (total_padding - left_padding)
+            else:
+                cell = cell + " " * max(width - len(plain_cell), 0)
+            _insert_readme_inline(text_widget, cell, row_tag, link_index)
+            if column < column_count - 1:
+                text_widget.insert("end", "  ", row_tag)
+        text_widget.insert("end", "\n")
+
+
+def configure_auto_hide_text_scrollbar(text_widget: object) -> None:
+    """Hide a ScrolledText scrollbar while all text fits in its viewport."""
+
+    scrollbar = getattr(text_widget, "vbar")
+
+    def update_scrollbar(*args: str) -> None:
+        scrollbar.set(*args)
+        try:
+            first, last = float(args[0]), float(args[1])
+        except (IndexError, ValueError):
+            return
+        if first <= 0.0 and last >= 1.0:
+            scrollbar.pack_forget()
+        else:
+            scrollbar.pack(side="right", fill="y")
+
+    text_widget.configure(yscrollcommand=update_scrollbar)
+    scrollbar.pack_forget()
 
 
 def copyable_dialog_kind_label(kind: str) -> str:

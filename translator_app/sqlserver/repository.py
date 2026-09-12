@@ -69,6 +69,49 @@ class SqlServerLocalizationRepository:
         finally:
             cursor.close()
 
+    def count_pending_text_characters(
+        self,
+        plan: TableTranslationPlan,
+        *,
+        source_language_id: int,
+        target_language_id: int,
+    ) -> int:
+        """Return the number of source text characters still needing work.
+
+        The same pending-row predicate used by translation is applied here.
+        For an existing destination row, only source columns whose destination
+        value is empty are included in the estimate.  ``LEN`` is used instead
+        of ``DATALENGTH`` so the result is in characters rather than bytes.
+        """
+
+        if not plan.text_column_names:
+            return 0
+
+        length_terms = [
+            (
+                "CASE WHEN "
+                f"{self._missing_target_column_condition(column_name)} "
+                "THEN COALESCE(LEN(CAST(src."
+                f"{quote_identifier(column_name)} AS NVARCHAR(MAX))), 0) "
+                "ELSE 0 END"
+            )
+            for column_name in plan.text_column_names
+        ]
+        select_expression = f"COALESCE(SUM({' + '.join(length_terms)}), 0)"
+        sql = self._pending_rows_sql(plan, select_expression, order_by=False)
+        cursor = self._cursor(self.read_connection)
+        try:
+            row = cursor.execute(
+                sql,
+                target_language_id,
+                source_language_id,
+            ).fetchone()
+            if not row or row[0] is None:
+                return 0
+            return max(int(row[0]), 0)
+        finally:
+            cursor.close()
+
     def iter_missing_source_rows(
         self,
         plan: TableTranslationPlan,

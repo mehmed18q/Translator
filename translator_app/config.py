@@ -75,3 +75,6 @@ class RuntimeConfig:
     libretranslate_api_key: str | None
     log_dir: Path
     retry: RetrySettings
+    # GUI all-table runs can omit selected tables after the review dialog.
+    # Keeping this optional preserves compatibility with CLI and integrations.
+    excluded_table_names: tuple[str, ...] = ()

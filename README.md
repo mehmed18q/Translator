@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.2.3" src="https://img.shields.io/badge/version-0.2.3-2563eb">
+  <img alt="Version 0.2.5" src="https://img.shields.io/badge/version-0.2.5-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <strong>Version 0.2.3</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 0.2.5</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -30,7 +30,7 @@ The Windows executable is self-contained: the destination computer does **not** 
 
 ## Screenshots
 
-The screenshots below show version 0.2.3 with the same four application tabs and workflow provided by the Windows executable.
+The screenshots below show version 0.2.5 with the main application tabs and workflow provided by the Windows executable.
 
 | Connection | Operation |
 |:---:|:---:|
@@ -42,7 +42,7 @@ The screenshots below show version 0.2.3 with the same four application tabs and
 
 ## Highlights
 
-- Desktop GUI with `Connection`, `Operation`, `Resources`, and `Logs` tabs.
+- Desktop GUI with `Connection`, `Operation`, `Resources`, `Logs`, and formatted `ReadMe` tabs.
 - Automatic discovery of tables ending in `Localize` or `Localizes`.
 - Special handling for `dbo.Resource` and `dbo.SystemMessages`.
 - Inserts missing destination-language records.
@@ -52,7 +52,8 @@ The screenshots below show version 0.2.3 with the same four application tabs and
 - RESX scanning, creation, and translation with existing values preserved.
 - Separate Pause/Resume and permanent Stop controls for database and RESX jobs.
 - Live progress, retries, translation caching, and detailed logs.
-- LibreTranslate and Google Free translation providers.
+- Google-first translation with automatic fallback to LibreTranslate when
+  Google reports a rate limit or quota response.
 - Persistent settings and logs beside the packaged executable.
 - Startup detection for Microsoft ODBC Driver 18.
 - Validation and automatic repair of translated HTML before database or RESX writes.
@@ -73,7 +74,7 @@ To use it on another Windows x64 computer:
 1. Copy `Translator.exe` into a folder where the user has write permission.
 2. Install **Microsoft ODBC Driver 18 for SQL Server** if it is not already installed.
 3. Open `Translator.exe`.
-4. Enter the SQL Server and translation-provider settings in the `Connection` tab.
+4. Enter the SQL Server and LibreTranslate fallback settings in the `Connection` tab.
 5. Use `Test Database` and, when applicable, `Test LibreTranslate`.
 6. Save the settings and start with a dry run from the `Operation` or `Resources` tab.
 
@@ -107,18 +108,24 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 
 ## Application tabs
 
-| Tab | Purpose |
-|---|---|
-| `Connection` | Configure and test SQL Server, select the translation provider, set retry/runtime options, and save settings. |
-| `Operation` | Select source and target languages, filter by schema/table, process eligible tables, and pause, resume, or stop the active database job. |
-| `Resources` | Scan or translate `.resx` files, review progress, and pause, resume, or stop the active resource job. |
-| `Logs` | Follow the current operation in real time and clear the on-screen log view. Clearing the view does not delete the log file. |
+| Tab          | Purpose |
+|--------------|---|
+| `Connection` | Configure and test SQL Server, configure the LibreTranslate fallback, set retry/runtime options, and save settings. |
+| `Operation`  | Select source and target languages, filter by schema/table, review and exclude tables before an all-table run, and pause, resume, or stop the active database job. |
+| `Resources`  | Scan or translate `.resx` files, review progress, and pause, resume, or stop the active resource job. |
+| `Logs`       | Follow the current operation in real time and clear the on-screen log view. Clearing the view does not delete the log file. |
+| `ReadMe`     | Read this documentation inside the application as formatted Markdown. |
 
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 0.2.3 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 0.2.5 | GitHub
 ```
+
+When `Run All Tables` is selected, a modal review lists the tables ordered by
+pending source-text characters (smallest first), with pending row counts. All
+eligible tables are checked initially. Individual tables can be excluded, or
+the `Select all` and `Clear all` controls can be used before choosing `Run selected`.
 
 ## Pause, resume, and stop
 
@@ -167,12 +174,16 @@ Every HTML response is validated before it is written to SQL Server or a RESX fi
 
 ## Translation providers
 
-| Provider | Notes |
-|---|---|
-| `libretranslate` | GUI default. Configure a self-hosted or remote LibreTranslate URL and optional API key. |
-| `google-free` | CLI default. Uses a public, unofficial endpoint and may be rate-limited or changed by the provider. |
+The application automatically uses Google's public endpoint first. If Google
+returns a rate-limit or quota response, the active job switches to
+LibreTranslate and keeps using it for the remainder of that job. Configure a
+self-hosted or remote LibreTranslate URL (and optional API key) in the
+`Connection` tab or with `LIBRETRANSLATE_URL`.
 
-For controlled production use, a self-hosted LibreTranslate instance is recommended.
+The CLI still accepts `--provider google-free` and `--provider libretranslate`
+for backwards compatibility. New runs should use the default `--provider auto`.
+For controlled production use, a self-hosted LibreTranslate instance is
+recommended.
 
 ## RESX translation
 
@@ -207,7 +218,7 @@ For the packaged executable, logs are written beside `Translator.exe`. For a sou
 - Tkinter
 - Microsoft ODBC Driver 18 for SQL Server
 - Access to SQL Server
-- Access to the configured translation provider
+- Access to Google and, when Google is rate-limited, the configured LibreTranslate fallback
 
 Create an environment and install dependencies:
 
@@ -255,7 +266,6 @@ SQLSERVER_TRUSTED_CONNECTION=false
 SQLSERVER_NO_ENCRYPT=false
 SQLSERVER_TRUST_SERVER_CERTIFICATE=true
 
-TRANSLATOR_PROVIDER=libretranslate
 LIBRETRANSLATE_URL=http://127.0.0.1:5000
 LIBRETRANSLATE_API_KEY=
 LOG_DIR=logs
@@ -291,7 +301,7 @@ python main.py --cli --source-language-id 1 --target-language-id 2 \
   --test-table dbo.SiteMenuLocalize --execute
 ```
 
-Use LibreTranslate:
+Use LibreTranslate only (legacy override):
 
 ```bash
 python main.py --cli --provider libretranslate \
@@ -344,7 +354,7 @@ The current release passes **68 tests**.
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "0.2.3"
+__version__ = "0.2.5"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

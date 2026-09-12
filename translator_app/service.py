@@ -115,6 +115,34 @@ class DatabaseTranslationService:
             self.logger.warning("No translation tables were found.")
             return summary
 
+        if config.excluded_table_names:
+            excluded = {name.casefold() for name in config.excluded_table_names}
+            excluded_tables = [
+                table.display_name
+                for table in tables
+                if (
+                    table.display_name.casefold() in excluded
+                    or table.table_name.casefold() in excluded
+                )
+            ]
+            summary.skipped_tables += len(excluded_tables)
+            tables = [
+                table
+                for table in tables
+                if (
+                    table.display_name.casefold() not in excluded
+                    and table.table_name.casefold() not in excluded
+                )
+            ]
+            self.logger.info(
+                "Excluded tables: %s",
+                ", ".join(excluded_tables) if excluded_tables else "none matched",
+            )
+            if not tables:
+                self.logger.warning("All discovered tables were excluded.")
+                self._emit_progress(summary, phase="finished", total_tables=0)
+                return summary
+
         planned_tables = self._prepare_tables(tables, config, summary)
         self._emit_progress(summary, phase="prepared", total_tables=len(tables))
         if not planned_tables:
@@ -147,8 +175,8 @@ class DatabaseTranslationService:
         tables: list[LocalizeTable],
         config: RuntimeConfig,
         summary: TranslationSummary,
-    ) -> list[tuple[TableTranslationPlan, int]]:
-        planned_tables: list[tuple[TableTranslationPlan, int]] = []
+    ) -> list[tuple[TableTranslationPlan, int, int]]:
+        planned_tables: list[tuple[TableTranslationPlan, int, int]] = []
 
         for table in tables:
             if self._should_stop():
@@ -180,7 +208,16 @@ class DatabaseTranslationService:
 
             summary.eligible_tables += 1
             summary.pending_rows += pending_count
-            planned_tables.append((plan, pending_count))
+            pending_characters = (
+                self._count_pending_text_characters(
+                    plan,
+                    config,
+                    fallback=pending_count,
+                )
+                if pending_count
+                else 0
+            )
+            planned_tables.append((plan, pending_count, pending_characters))
             self._emit_progress(
                 summary,
                 phase="prepare",
@@ -190,12 +227,31 @@ class DatabaseTranslationService:
             )
 
             self.logger.info(
-                "Table ready: %s | base=%s | fk=%s | translatable_columns=%s | pending=%s",
+                "Table ready: %s | base=%s | fk=%s | translatable_columns=%s | pending=%s | pending_characters=%s",
                 table.display_name,
                 table.referenced_table_name or "-",
                 ",".join(table.key_column_names),
                 ", ".join(plan.text_column_names),
                 pending_count,
+                pending_characters,
+            )
+
+        # Shorter translation payloads are handled first.  The table name and
+        # row count make ties deterministic and keep progress reproducible.
+        planned_tables.sort(
+            key=lambda item: (
+                item[2],
+                item[1],
+                item[0].table.display_name.casefold(),
+            )
+        )
+        if planned_tables:
+            self.logger.info(
+                "Translation table order (smallest text first): %s",
+                ", ".join(
+                    f"{plan.table.display_name} ({characters} chars)"
+                    for plan, _pending, characters in planned_tables
+                ),
             )
 
         self.logger.info(
@@ -209,11 +265,14 @@ class DatabaseTranslationService:
 
     def _translate_and_insert(
         self,
-        planned_tables: list[tuple[TableTranslationPlan, int]],
+        planned_tables: list[tuple[TableTranslationPlan, int, int]],
         config: RuntimeConfig,
         summary: TranslationSummary,
     ) -> None:
-        for table_index, (plan, pending_count) in enumerate(planned_tables, start=1):
+        for table_index, (plan, pending_count, _pending_characters) in enumerate(
+            planned_tables,
+            start=1,
+        ):
             if self._should_stop():
                 self.logger.warning("Operation stopped before the next table.")
                 return
@@ -404,6 +463,44 @@ class DatabaseTranslationService:
                 table_pending_rows=pending_count,
                 table_processed_rows=table_processed,
             )
+
+    def _count_pending_text_characters(
+        self,
+        plan: TableTranslationPlan,
+        config: RuntimeConfig,
+        *,
+        fallback: int,
+    ) -> int:
+        counter = getattr(self.repository, "count_pending_text_characters", None)
+        if not callable(counter):
+            # Lightweight repository fakes and older integrations may not
+            # expose the optional size query. Preserve their behavior while
+            # still using the exact character count in the SQL repository.
+            return max(fallback, 0)
+
+        try:
+            value = run_with_retry(
+                lambda: counter(
+                    plan,
+                    source_language_id=config.source_language.id,
+                    target_language_id=config.target_language.id,
+                ),
+                operation_name=f"measure text in {plan.table.display_name}",
+                attempts=config.retry.attempts,
+                initial_delay_seconds=config.retry.initial_delay_seconds,
+                backoff_factor=config.retry.backoff_factor,
+                logger=self.logger,
+            )
+            return max(int(value), 0)
+        except Exception as exc:
+            # Ordering is an optimization; an unavailable size estimate must
+            # not make an otherwise translatable table fail preparation.
+            self.logger.warning(
+                "Could not measure text size for %s; sorting by pending rows: %s",
+                plan.table.display_name,
+                exc,
+            )
+            return max(fallback, 0)
 
     def _translate_row(
         self,
