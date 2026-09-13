@@ -3,12 +3,48 @@ from __future__ import annotations
 import unittest
 
 from translator_app.html_content import (
+    apply_html_direction,
     parse_html_structure,
     validate_or_repair_html_translation,
 )
+from translator_app.languages import get_language
 
 
 class HtmlContentTests(unittest.TestCase):
+    def test_normalizes_existing_direction_and_alignment_for_ltr_target(self) -> None:
+        value = '<div dir="rtl" style="direction: rtl; text-align: right;"><p>Hi</p></div>'
+
+        normalized = apply_html_direction(value, get_language(2))
+
+        self.assertIn('dir="ltr"', normalized)
+        self.assertIn("direction: ltr", normalized)
+        self.assertIn("text-align: left", normalized)
+        self.assertNotIn("rtl", normalized)
+        self.assertNotIn("right", normalized)
+
+    def test_normalizes_alignment_when_direction_attribute_is_absent(self) -> None:
+        value = '<p style="text-align: left">سلام</p>'
+
+        normalized = apply_html_direction(value, get_language(1))
+
+        self.assertIn("text-align: right", normalized)
+        self.assertNotIn("text-align: left", normalized)
+
+    def test_leaves_script_and_style_contents_unchanged(self) -> None:
+        value = '<p dir="ltr">Hello</p><script>var dir = "ltr";</script>'
+
+        normalized = apply_html_direction(value, get_language(1))
+
+        self.assertIn('<script>var dir = "ltr";</script>', normalized)
+        self.assertIn('dir="rtl"', normalized)
+
+    def test_leaves_directional_markup_inside_comments_unchanged(self) -> None:
+        value = '<p dir="ltr">Hello</p><!-- <p dir="ltr">comment</p> -->'
+
+        normalized = apply_html_direction(value, get_language(1))
+
+        self.assertIn('<!-- <p dir="ltr">comment</p> -->', normalized)
+
     def test_accepts_valid_translation_and_preserves_html(self) -> None:
         result = validate_or_repair_html_translation(
             '<div class="content"><p>سلام <strong>دنیا</strong></p></div>',

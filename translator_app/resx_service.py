@@ -4,12 +4,15 @@ import copy
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from translator_app.config import RetrySettings
-from translator_app.html_content import validate_or_repair_html_translation
+from translator_app.html_content import (
+    apply_html_direction,
+    validate_or_repair_html_translation,
+)
 from translator_app.languages import LanguageOption
 from translator_app.pause_control import (
     CancelCallback,
@@ -17,7 +20,13 @@ from translator_app.pause_control import (
     wait_while_paused,
 )
 from translator_app.retry import run_with_retry
-from translator_app.service import calculate_percent, detect_text_format, format_progress
+from translator_app.service import (
+    calculate_percent,
+    detect_text_format,
+    format_progress,
+    single_line,
+    unfinished_status,
+)
 from translator_app.translators.base import Translator
 
 
@@ -53,6 +62,7 @@ class ResxTranslationSummary:
     failed_entries: int = 0
     created_files: int = 0
     updated_files: int = 0
+    unfinished_records: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -130,6 +140,29 @@ class ResxTranslationService:
         self._translation_cache: dict[tuple[str, str, str, str], str] = {}
 
     def run(self, config: ResxTranslationConfig) -> ResxTranslationSummary:
+        summary = ResxTranslationSummary(discovered_files=len(config.base_file_names))
+        try:
+            return self._run(config, summary)
+        except KeyboardInterrupt:
+            self._record_unfinished(
+                summary,
+                "operation | status=stopped | reason=keyboard interrupt",
+            )
+            raise
+        except Exception as exc:
+            self._record_unfinished(
+                summary,
+                f"operation status={unfinished_status(exc)} | reason={exc}",
+            )
+            raise
+        finally:
+            self._log_unfinished_records(summary)
+
+    def _run(
+        self,
+        config: ResxTranslationConfig,
+        summary: ResxTranslationSummary,
+    ) -> ResxTranslationSummary:
         self.logger.info(
             "Starting RESX translation: source=%s target=%s | mode=%s | folder=%s",
             config.source_language.code,
@@ -138,9 +171,12 @@ class ResxTranslationService:
             config.resource_dir,
         )
 
-        summary = ResxTranslationSummary(discovered_files=len(config.base_file_names))
         if self._should_stop():
             self.logger.warning("RESX operation stopped before file discovery.")
+            self._record_unfinished(
+                summary,
+                "operation | status=stopped | reason=operation stopped before file discovery",
+            )
             return summary
         self._emit_progress(summary, phase="discovered", total_files=len(config.base_file_names))
 
@@ -184,6 +220,11 @@ class ResxTranslationService:
         for file_index, base_file_name in enumerate(selected_files, start=1):
             if self._should_stop():
                 self.logger.warning("RESX operation stopped during preparation.")
+                for remaining_file in selected_files[file_index - 1 :]:
+                    self._record_unfinished(
+                        summary,
+                        f"file={remaining_file} | status=stopped | reason=operation stopped before preparation",
+                    )
                 break
 
             source_path = source_resx_path(
@@ -199,6 +240,10 @@ class ResxTranslationService:
 
             if not source_path.exists():
                 summary.skipped_files += 1
+                self._record_unfinished(
+                    summary,
+                    f"file={base_file_name} | status=not found | reason=source file {source_path} was not found",
+                )
                 self.logger.warning(
                     "RESX source skipped: %s was not found for source language %s",
                     source_path,
@@ -212,11 +257,19 @@ class ResxTranslationService:
                 target_existing_keys = self._target_existing_keys(target_path)
             except Exception as exc:
                 summary.skipped_files += 1
+                self._record_unfinished(
+                    summary,
+                    f"file={base_file_name} | status={unfinished_status(exc)} | reason={exc}",
+                )
                 self.logger.exception("RESX file skipped: %s | reason=%s", base_file_name, exc)
                 continue
 
             if not source_entries:
                 summary.skipped_files += 1
+                self._record_unfinished(
+                    summary,
+                    f"file={base_file_name} | status=empty | reason=source file has no string entries",
+                )
                 self.logger.warning("RESX file skipped: %s has no string entries.", source_path)
                 continue
 
@@ -273,19 +326,41 @@ class ResxTranslationService:
         for file_index, plan in enumerate(plans, start=1):
             if self._should_stop():
                 self.logger.warning("RESX operation stopped before the next file.")
+                for remaining_plan in plans[file_index - 1 :]:
+                    remaining_entries = len(remaining_plan.pending_entries)
+                    self._record_unfinished(
+                        summary,
+                        f"file={remaining_plan.base_file_name} | entries={remaining_entries} | status=stopped | reason=operation stopped before file",
+                    )
                 return
 
-            target_document = self._load_or_create_target_document(plan)
-            target_root = target_document.root
-            target_keys = existing_data_keys(target_root)
             file_processed = 0
             file_failed = 0
             changed = False
+            target_document: ResxDocument | None = None
 
             try:
+                target_document = self._load_or_create_target_document(plan)
+                target_root = target_document.root
+                target_keys = existing_data_keys(target_root)
                 for entry in plan.pending_entries:
                     if self._should_stop():
                         self.logger.warning("RESX operation stopped by user request.")
+                        self._record_unfinished(
+                            summary,
+                            f"file={plan.base_file_name} | key={entry.key} | status=stopped | reason=operation stopped before entry",
+                        )
+                        remaining_entries = max(len(plan.pending_entries) - file_processed - 1, 0)
+                        if remaining_entries:
+                            self._record_unfinished(
+                                summary,
+                                f"file={plan.base_file_name} | entries={remaining_entries} | status=stopped | reason=operation stopped before entry",
+                            )
+                        for remaining_plan in plans[file_index:]:
+                            self._record_unfinished(
+                                summary,
+                                f"file={remaining_plan.base_file_name} | entries={len(remaining_plan.pending_entries)} | status=stopped | reason=operation stopped before file",
+                            )
                         return
 
                     status = "failed"
@@ -310,6 +385,10 @@ class ResxTranslationService:
                         summary.failed_entries += 1
                         file_failed += 1
                         status = "failed"
+                        self._record_unfinished(
+                            summary,
+                            f"file={plan.base_file_name} | key={entry.key} | status={unfinished_status(exc)} | reason={exc}",
+                        )
                         self.logger.exception(
                             "RESX key failed: file=%s key=%s | reason=%s",
                             plan.base_file_name,
@@ -344,15 +423,46 @@ class ResxTranslationService:
                             summary.skipped_existing_entries,
                             summary.failed_entries,
                         )
+            except Exception as exc:
+                self._record_unfinished(
+                    summary,
+                    f"file={plan.base_file_name} | status={unfinished_status(exc)} | reason={exc}",
+                )
+                self.logger.exception(
+                    "RESX file processing failed: %s | reason=%s",
+                    plan.base_file_name,
+                    exc,
+                )
+                continue
             finally:
-                if changed or not plan.target_exists:
-                    write_resx(target_document)
-                    if plan.target_exists:
+                if target_document is not None and (changed or not plan.target_exists):
+                    write_succeeded = True
+                    try:
+                        write_resx(target_document)
+                    except Exception as exc:
+                        write_succeeded = False
+                        self._record_unfinished(
+                            summary,
+                            f"file={plan.base_file_name} | status={unfinished_status(exc)} | reason=writing target failed: {exc}",
+                        )
+                        self.logger.exception(
+                            "RESX target write failed: %s | reason=%s",
+                            plan.target_path,
+                            exc,
+                        )
+                    if write_succeeded and plan.target_exists:
                         summary.updated_files += 1
-                    else:
+                    elif write_succeeded:
                         summary.created_files += 1
-                    self.logger.info("RESX target written: %s", plan.target_path)
+                    if write_succeeded:
+                        self.logger.info("RESX target written: %s", plan.target_path)
 
+            unreported_entries = max(len(plan.pending_entries) - file_processed, 0)
+            if unreported_entries:
+                self._record_unfinished(
+                    summary,
+                    f"file={plan.base_file_name} | entries={unreported_entries} | status=not processed | reason=entry iterator ended early",
+                )
             self.logger.info(
                 "RESX file finished: %s | processed=%s failed=%s",
                 plan.base_file_name,
@@ -447,6 +557,19 @@ class ResxTranslationService:
                         base_file_name,
                         entry.key,
                     )
+                directionally_corrected = apply_html_direction(
+                    html_result.value,
+                    config.target_language,
+                )
+                if directionally_corrected != html_result.value:
+                    self.logger.info(
+                        "HTML direction normalized | RESX file=%s | key=%s | direction=%s | text-align=%s",
+                        base_file_name,
+                        entry.key,
+                        "rtl" if config.target_language.right_to_left else "ltr",
+                        "right" if config.target_language.right_to_left else "left",
+                    )
+                restored_value = directionally_corrected
             self._translation_cache[cache_key] = restored_value
         return self._translation_cache[cache_key]
 
@@ -485,6 +608,18 @@ class ResxTranslationService:
 
     def _is_cancelled(self) -> bool:
         return bool(self.cancel_callback and self.cancel_callback())
+
+    def _record_unfinished(self, summary: ResxTranslationSummary, record: str) -> None:
+        summary.unfinished_records.append(single_line(record))
+
+    def _log_unfinished_records(self, summary: ResxTranslationSummary) -> None:
+        self.logger.info("Unfinished records:")
+        self.logger.info("Count: %s", len(summary.unfinished_records))
+        if not summary.unfinished_records:
+            self.logger.info("  none")
+            return
+        for record in summary.unfinished_records:
+            self.logger.info("  - %s", record)
 
     def _should_stop(self) -> bool:
         return wait_while_paused(

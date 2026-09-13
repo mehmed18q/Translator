@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
+from translator_app.languages import LanguageOption
+
 
 VOID_ELEMENTS = frozenset(
     {
@@ -31,6 +33,19 @@ MARKDOWN_HTML_FENCE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 EDGE_WHITESPACE = re.compile(r"^(\s*)(.*?)(\s*)$", re.DOTALL)
+HTML_START_TAG = re.compile(
+    r"<(?P<tag>[A-Za-z][A-Za-z0-9:-]*)(?P<attrs>(?:[^\"'<>]|\"[^\"]*\"|'[^']*')*)>"
+)
+HTML_ATTRIBUTE = re.compile(
+    r"(?P<prefix>\s+)(?P<name>[A-Za-z_:][A-Za-z0-9_.:-]*)"
+    r"(?:\s*=\s*(?P<quoted>\"[^\"]*\"|'[^']*')|\s*=\s*(?P<bare>[^\s/>]+))?",
+    re.DOTALL,
+)
+HTML_STYLE_PROPERTY = re.compile(
+    r"(?P<prefix>^|;)(?P<before>\s*)(?P<name>direction|text-align)"
+    r"(?P<between>\s*:\s*)(?P<value>[^;]+)",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -62,6 +77,177 @@ class HtmlTranslationResult:
     value: str
     repaired: bool
     reason: str | None = None
+
+
+def apply_html_direction(
+    value: str,
+    target_language: LanguageOption | bool,
+) -> str:
+    """Align directional HTML declarations with the target language.
+
+    Existing ``dir``, ``align``, ``direction`` and ``text-align`` declarations
+    are corrected consistently.  HTML that does not contain any directional
+    declaration is left untouched: adding layout attributes to arbitrary
+    markup could change intentionally centered or mixed-direction content.
+    ``target_language`` accepts a ``LanguageOption`` or a boolean for callers
+    that only have the RTL flag available.
+    """
+
+    right_to_left = bool(
+        target_language.right_to_left
+        if isinstance(target_language, LanguageOption)
+        else getattr(target_language, "right_to_left", target_language)
+    )
+    direction = "rtl" if right_to_left else "ltr"
+    alignment = "right" if right_to_left else "left"
+
+    if not value or not _contains_directional_html(value):
+        return value
+
+    protected_ranges = _protected_html_ranges(value)
+    result: list[str] = []
+    position = 0
+    for match in HTML_START_TAG.finditer(value):
+        result.append(value[position : match.start()])
+        if any(start <= match.start() < end for start, end in protected_ranges):
+            result.append(match.group(0))
+        else:
+            result.append(
+                _rewrite_directional_start_tag(
+                    match.group(0),
+                    match.group("tag"),
+                    direction=direction,
+                    alignment=alignment,
+                )
+            )
+        position = match.end()
+    result.append(value[position:])
+    return "".join(result)
+
+
+def normalize_html_direction(
+    value: str,
+    target_language: LanguageOption | bool,
+) -> str:
+    """Backward-compatible descriptive alias for :func:`apply_html_direction`."""
+
+    return apply_html_direction(value, target_language)
+
+
+def _contains_directional_html(value: str) -> bool:
+    protected_ranges = _protected_html_ranges(value)
+    for match in HTML_START_TAG.finditer(value):
+        if any(start <= match.start() < end for start, end in protected_ranges):
+            continue
+        tag = match.group(0)
+        if re.search(r"\s(?:dir|align)\s*=", tag, re.IGNORECASE):
+            return True
+        style = _html_attribute_value(tag, "style")
+        if style and re.search(r"(?:^|;)\s*(?:direction|text-align)\s*:", style, re.I):
+            return True
+    return False
+
+
+def _protected_html_ranges(value: str) -> tuple[tuple[int, int], ...]:
+    ranges: list[tuple[int, int]] = []
+    comment_pattern = re.compile(r"<!--.*?-->", re.DOTALL)
+    ranges.extend((match.start(), match.end()) for match in comment_pattern.finditer(value))
+    for tag_name in ("script", "style"):
+        pattern = re.compile(
+            rf"<{tag_name}\b[^>]*>.*?</{tag_name}\s*>",
+            re.IGNORECASE | re.DOTALL,
+        )
+        ranges.extend((match.start(), match.end()) for match in pattern.finditer(value))
+    return tuple(ranges)
+
+
+def _html_attribute_value(tag: str, attribute_name: str) -> str | None:
+    for match in HTML_ATTRIBUTE.finditer(tag):
+        if match.group("name").casefold() != attribute_name.casefold():
+            continue
+        quoted = match.group("quoted")
+        if quoted is not None:
+            return quoted[1:-1]
+        return match.group("bare")
+    return None
+
+
+def _rewrite_directional_start_tag(
+    raw_tag: str,
+    tag_name: str,
+    *,
+    direction: str,
+    alignment: str,
+) -> str:
+    if tag_name.casefold() in NON_TRANSLATABLE_ELEMENTS:
+        return raw_tag
+
+    has_dir = _html_attribute_value(raw_tag, "dir") is not None
+    has_align = _html_attribute_value(raw_tag, "align") is not None
+    style = _html_attribute_value(raw_tag, "style")
+    has_style_direction = bool(
+        style and re.search(r"(?:^|;)\s*direction\s*:", style, re.I)
+    )
+    has_style_alignment = bool(
+        style and re.search(r"(?:^|;)\s*text-align\s*:", style, re.I)
+    )
+    if not (has_dir or has_align or has_style_direction or has_style_alignment):
+        return raw_tag
+
+    rewritten = _replace_html_attribute(raw_tag, "dir", direction)
+    rewritten = _replace_html_attribute(rewritten, "align", alignment)
+    style = _html_attribute_value(rewritten, "style")
+    if style is not None:
+        style = _rewrite_directional_style(
+            style,
+            direction=direction,
+            alignment=alignment,
+        )
+        rewritten = _replace_html_attribute(rewritten, "style", style)
+    return rewritten
+
+
+def _replace_html_attribute(tag: str, attribute_name: str, value: str) -> str:
+    pattern = re.compile(
+        rf"(?P<prefix>\s+)(?P<name>{re.escape(attribute_name)})"
+        rf"(?P<spacing>\s*=\s*)(?:(?P<quoted>\"[^\"]*\"|'[^']*')|"
+        rf"(?P<bare>[^\s/>]+))",
+        re.IGNORECASE,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        prefix = match.group("prefix")
+        spacing = match.group("spacing")
+        quoted = match.group("quoted")
+        if quoted:
+            return f"{prefix}{match.group('name')}{spacing}{quoted[0]}{value}{quoted[0]}"
+        return f"{prefix}{match.group('name')}{spacing}{value}"
+
+    return pattern.sub(replace, tag, count=1)
+
+
+def _rewrite_directional_style(
+    style: str,
+    *,
+    direction: str,
+    alignment: str,
+) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group("name")
+        if name.casefold() == "direction":
+            value = direction
+        else:
+            value = alignment
+        original_value = match.group("value")
+        leading = original_value[: len(original_value) - len(original_value.lstrip())]
+        trailing = original_value[len(original_value.rstrip()) :]
+        important = " !important" if re.search(r"!\s*important\s*$", original_value, re.I) else ""
+        return (
+            f"{match.group('prefix')}{match.group('before')}"
+            f"{name}{match.group('between')}{leading}{value}{important}{trailing}"
+        )
+
+    return HTML_STYLE_PROPERTY.sub(replace, style)
 
 
 class _HtmlStructureParser(HTMLParser):

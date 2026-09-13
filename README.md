@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.2.5" src="https://img.shields.io/badge/version-0.2.5-2563eb">
+  <img alt="Version 0.2.6" src="https://img.shields.io/badge/version-0.2.6-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="68 tests passing" src="https://img.shields.io/badge/tests-68%20passing-2ea44f">
+  <img alt="72 tests passing" src="https://img.shields.io/badge/tests-72%20passing-2ea44f">
 </p>
 
 <p align="center">
-  <strong>Version 0.2.5</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 0.2.6</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -30,7 +30,7 @@ The Windows executable is self-contained: the destination computer does **not** 
 
 ## Screenshots
 
-The screenshots below show version 0.2.5 with the main application tabs and workflow provided by the Windows executable.
+The screenshots below show version 0.2.6 with the main application tabs and workflow provided by the Windows executable.
 
 | Connection | Operation |
 |:---:|:---:|
@@ -119,7 +119,7 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 0.2.5 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 0.2.6 | GitHub
 ```
 
 When `Run All Tables` is selected, a modal review lists the tables ordered by
@@ -150,9 +150,9 @@ Database processing follows these rules:
 
 Only textual SQL columns whose names are approved in `translator_app/translatable_columns.py` are translated. Identity, computed, and rowversion columns are excluded from inserts. Foreign-key metadata is preferred for entity matching; the table name is used as a fallback convention when a suitable foreign key is unavailable.
 
-HTML content is detected automatically. `HTMLContent` fields and values that look like HTML are sent to compatible providers with `format=html`; ordinary values use `format=text`.
+HTML content is detected automatically. `HTMLContent` fields and values that look like HTML are sent to compatible providers with `format=html`; ordinary values use `format=text`. When an HTML value already contains directional markup (`dir`, `align`, `direction`, or `text-align`), those declarations are normalized for the target language: RTL languages use `dir="rtl"` and right alignment, while LTR languages use `dir="ltr"` and left alignment. Script and style contents are left untouched.
 
-Every HTML response is validated before it is written to SQL Server or a RESX file. The source tag structure, attributes, comments, and non-translatable `script`/`style` content are preserved. Escaped HTML and Markdown code fences are normalized automatically. If the provider returns missing, changed, or unbalanced markup, the application translates the source text nodes separately and rebuilds them inside the original HTML structure. If a safe reconstruction is not possible, the item fails and malformed HTML is not stored.
+Every HTML response is validated before it is written to SQL Server or a RESX file. The source tag structure, attributes (apart from intentional target-direction normalization), comments, and non-translatable `script`/`style` content are preserved. Escaped HTML and Markdown code fences are normalized automatically. If the provider returns missing, changed, or unbalanced markup, the application translates the source text nodes separately and rebuilds them inside the original HTML structure. If a safe reconstruction is not possible, the item fails and malformed HTML is not stored.
 
 ### Special tables
 
@@ -165,12 +165,12 @@ Every HTML response is validated before it is written to SQL Server or a RESX fi
 
 | ID | Language | Code |
 |---:|---|:---:|
-| 1 | Persian | `fa` |
+| 1 | فارسی | `fa` |
 | 2 | English | `en` |
-| 3 | Arabic | `ar` |
-| 4 | French | `fr` |
-| 5 | Chinese | `zh` |
-| 6 | Russian | `ru` |
+| 3 | عربي | `ar` |
+| 4 | Français | `fr` |
+| 5 | 中国人 | `zh` |
+| 6 | Русский | `ru` |
 
 ## Translation providers
 
@@ -206,7 +206,7 @@ Every database or RESX operation creates a UTF-8 log file named:
 logs/translator_YYYYMMDD_HHMMSS.log
 ```
 
-Logs include discovered and eligible tables/files, pending counts, row or key progress, inserted and updated records, skipped existing values, retries, failures, and full exception details. HTML checks are explicitly recorded as `HTML response validated` or `HTML response repaired`, including the table, column and row identifier—or the RESX filename and key—so every automatic repair can be traced. In the GUI, the same operation messages appear live in the `Logs` tab.
+Logs include discovered and eligible tables/files, pending counts, row or key progress, inserted and updated records, skipped existing values, retries, failures, and full exception details. HTML checks are explicitly recorded as `HTML response validated`, `HTML response repaired`, or `HTML direction normalized`, including the table, column and row identifier—or the RESX filename and key—so every automatic repair can be traced. At the end of every operation, the log contains an `Unfinished records` section. It lists each failed, timed-out, stopped, skipped, or otherwise unprocessed table row or RESX key (or an aggregate count when the data source stopped before identifiers could be read). In the GUI, the same operation messages appear live in the `Logs` tab.
 
 For the packaged executable, logs are written beside `Translator.exe`. For a source checkout, relative log paths are resolved from the current working directory.
 
@@ -347,14 +347,14 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **68 tests**.
+The current release passes **72 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "0.2.5"
+__version__ = "0.2.6"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

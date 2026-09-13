@@ -32,7 +32,7 @@ from translator_app.config import (
     RuntimeConfig,
     SqlServerConnectionSettings,
 )
-from translator_app.languages import LANGUAGES, get_language
+from translator_app.languages import LANGUAGES, get_language, rtl_display_text
 from translator_app.logging_config import configure_logging
 from translator_app.models import build_table_translation_plan
 from translator_app.resx_service import (
@@ -64,14 +64,6 @@ MUTED_TEXT_COLOR = "#667085"
 PRIMARY_COLOR = "#2563eb"
 DANGER_COLOR = "#dc2626"
 
-GUI_LANGUAGE_NAMES = {
-    1: "Persian",
-    2: "English",
-    3: "Arabic",
-    4: "French",
-    5: "Chinese",
-    6: "Russian",
-}
 APP_AUTHOR = "Sadeq Kiumarsi"
 APP_COPYRIGHT_YEAR = 2026
 PROJECT_REPOSITORY_URL = "https://github.com/mehmed18q/Translator"
@@ -3697,8 +3689,8 @@ def normalize_url(value: str) -> str | None:
 
 def language_label(language_id: int) -> str:
     language = get_language(language_id)
-    name = GUI_LANGUAGE_NAMES.get(language.id, language.code.upper())
-    return f"{language.id} - {name} ({language.code})"
+    title = rtl_display_text(language.title) if language.right_to_left else language.title
+    return f"{language.id} - {title} ({language.code})"
 
 
 def language_id_from_label(label: str) -> int:

@@ -57,10 +57,10 @@ def main(argv: list[str] | None = None) -> int:
             read_connection.close()
         return 0
     except KeyboardInterrupt:
-        print("\nعملیات توسط کاربر متوقف شد.")
+        print("\nOperation stopped by the user.")
         return 130
     except Exception as exc:
-        print(f"خطای اجرا: {exc}", file=sys.stderr)
+        print(f"Execution error: {exc}", file=sys.stderr)
         return 1
 
 
@@ -172,23 +172,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     if args.table_name and args.test_table_name:
-        raise ValueError("همزمان نمی‌توانید --table و --test-table بدهید.")
+        raise ValueError("--table and --test-table cannot be used together.")
 
     source_language_id = args.source_language_id or prompt_language_id(
-        "زبان مبدا را انتخاب کنید:"
+        "Select the source language:"
     )
     target_language_id = args.target_language_id or prompt_language_id(
-        "زبان مقصد را انتخاب کنید:"
+        "Select the target language:"
     )
 
     if source_language_id == target_language_id:
-        raise ValueError("زبان مبدا و مقصد نباید یکسان باشند.")
+        raise ValueError("The source and target languages must be different.")
 
     if args.execute:
         dry_run = False
     elif sys.stdin.isatty():
         dry_run = not prompt_yes_no(
-            "آیا insert واقعی انجام شود؟ اگر نه، فقط dry-run اجرا می‌شود.",
+            "Run in execute mode and insert translated rows? Otherwise, run a dry-run.",
             default=False,
         )
     else:
@@ -244,17 +244,17 @@ def run_requested_mode(
     )
 
     logger.info(
-        "مرحله تست شروع شد: table=%s.%s",
+        "Test phase started: table=%s.%s",
         test_config.schema_name or "*",
         test_config.table_name,
     )
     test_summary = service.run(test_config)
 
     if not should_continue_after_test(args, test_summary):
-        logger.info("بعد از مرحله تست متوقف شد. برای ادامه همه جدول‌ها دوباره اجرا کنید.")
+        logger.info("Stopped after the test phase. Run all tables again to continue.")
         return
 
-    logger.info("مرحله تست تایید شد. اجرای همه جدول‌های Localize/Localizes شروع شد.")
+    logger.info("Test phase approved. Starting all Localize/Localizes tables.")
     service.run(config)
 
 
@@ -272,10 +272,10 @@ def should_continue_after_test(
     failed_rows = getattr(test_summary, "failed_rows", 0)
     skipped_tables = getattr(test_summary, "skipped_tables", 0)
     return prompt_yes_no(
-        "مرحله تست تمام شد "
+        "Test phase finished "
         f"(inserted={inserted_rows}, updated={updated_rows}, "
         f"failed={failed_rows}, skipped_tables={skipped_tables}). "
-        "ادامه همه جدول‌ها انجام شود؟",
+        "Continue with all tables?",
         default=False,
     )
 
@@ -296,12 +296,14 @@ def split_table_reference(
         normalized_schema_name = normalize_sql_name(schema_name)
         if normalized_schema_name and normalized_schema_name != parsed_schema_name:
             raise ValueError(
-                "schema داده‌شده با نام کامل جدول یکی نیست: "
+                "The schema filter does not match the fully qualified table name: "
                 f"{normalized_schema_name} != {parsed_schema_name}"
             )
         return parsed_schema_name, parsed_table_name
 
-    raise ValueError("فرمت نام جدول معتبر نیست. از TableName یا SchemaName.TableName استفاده کنید.")
+    raise ValueError(
+        "Invalid table name format. Use TableName or SchemaName.TableName."
+    )
 
 
 def normalize_sql_name(value: str | None) -> str | None:
@@ -331,7 +333,7 @@ def prompt_connection_settings(args: argparse.Namespace) -> SqlServerConnectionS
 
     if not trusted_connection and sys.stdin.isatty():
         trusted_connection = prompt_yes_no(
-            "از Trusted_Connection استفاده شود؟",
+            "Use Trusted_Connection?",
             default=False,
         )
 
@@ -360,11 +362,11 @@ def prompt_language_id(prompt: str) -> int:
     print(prompt)
     print(format_language_options())
     while True:
-        raw_value = input("شناسه زبان: ").strip()
+        raw_value = input("Language ID: ").strip()
         try:
             return get_language(int(raw_value)).id
         except (ValueError, TypeError):
-            print("شناسه زبان معتبر نیست. دوباره تلاش کنید.")
+            print("Invalid language ID. Try again.")
 
 
 def prompt_required(prompt: str) -> str:
@@ -372,7 +374,7 @@ def prompt_required(prompt: str) -> str:
         value = input(f"{prompt}: ").strip()
         if value:
             return value
-        print("این مقدار الزامی است.")
+        print("This value is required.")
 
 
 def prompt_yes_no(prompt: str, *, default: bool) -> bool:
@@ -381,11 +383,11 @@ def prompt_yes_no(prompt: str, *, default: bool) -> bool:
         value = input(f"{prompt} [{suffix}]: ").strip().lower()
         if not value:
             return default
-        if value in {"y", "yes", "بله", "آره"}:
+        if value in {"y", "yes"}:
             return True
-        if value in {"n", "no", "خیر", "نه"}:
+        if value in {"n", "no"}:
             return False
-        print("لطفا y یا n وارد کنید.")
+        print("Please enter y or n.")
 
 
 def parse_env_bool(name: str, default: bool) -> bool:

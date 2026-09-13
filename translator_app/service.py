@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from translator_app.config import RuntimeConfig
-from translator_app.html_content import validate_or_repair_html_translation
+from translator_app.html_content import (
+    apply_html_direction,
+    validate_or_repair_html_translation,
+)
 from translator_app.models import (
     LocalizeTable,
     TableTranslationPlan,
@@ -38,6 +41,7 @@ class TranslationSummary:
     updated_rows: int = 0
     skipped_existing_rows: int = 0
     failed_rows: int = 0
+    unfinished_records: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -92,6 +96,29 @@ class DatabaseTranslationService:
         self.pause_callback = pause_callback
 
     def run(self, config: RuntimeConfig) -> TranslationSummary:
+        summary = TranslationSummary()
+        try:
+            return self._run(config, summary)
+        except KeyboardInterrupt:
+            self._record_unfinished(
+                summary,
+                "operation | status=stopped | reason=keyboard interrupt",
+            )
+            raise
+        except Exception as exc:
+            self._record_unfinished(
+                summary,
+                f"operation status={unfinished_status(exc)} | reason={exc}",
+            )
+            raise
+        finally:
+            self._log_unfinished_records(summary)
+
+    def _run(
+        self,
+        config: RuntimeConfig,
+        summary: TranslationSummary,
+    ) -> TranslationSummary:
         self.logger.info(
             "Starting translation: source=%s target=%s | mode=%s",
             config.source_language.code,
@@ -99,9 +126,12 @@ class DatabaseTranslationService:
             "dry-run" if config.dry_run else "execute",
         )
 
-        summary = TranslationSummary()
         if self._should_stop():
             self.logger.warning("Operation stopped before table discovery.")
+            self._record_unfinished(
+                summary,
+                "operation | status=stopped | reason=operation stopped before table discovery",
+            )
             return summary
 
         tables = self.schema_reader.get_localize_tables(
@@ -126,6 +156,11 @@ class DatabaseTranslationService:
                 )
             ]
             summary.skipped_tables += len(excluded_tables)
+            for excluded_table in excluded_tables:
+                self._record_unfinished(
+                    summary,
+                    f"table={excluded_table} | status=excluded | reason=excluded by user selection",
+                )
             tables = [
                 table
                 for table in tables
@@ -178,9 +213,14 @@ class DatabaseTranslationService:
     ) -> list[tuple[TableTranslationPlan, int, int]]:
         planned_tables: list[tuple[TableTranslationPlan, int, int]] = []
 
-        for table in tables:
+        for table_index, table in enumerate(tables):
             if self._should_stop():
                 self.logger.warning("Operation stopped during preparation.")
+                for remaining_table in tables[table_index:]:
+                    self._record_unfinished(
+                        summary,
+                        f"table={remaining_table.display_name} | status=stopped | reason=operation stopped before preparation",
+                    )
                 break
 
             try:
@@ -199,6 +239,10 @@ class DatabaseTranslationService:
                 )
             except Exception as exc:
                 summary.skipped_tables += 1
+                self._record_unfinished(
+                    summary,
+                    f"table={table.display_name} | status={unfinished_status(exc)} | reason={exc}",
+                )
                 self.logger.exception(
                     "Table skipped: %s | reason=%s",
                     table.display_name,
@@ -275,6 +319,13 @@ class DatabaseTranslationService:
         ):
             if self._should_stop():
                 self.logger.warning("Operation stopped before the next table.")
+                for remaining_plan, remaining_count, _characters in planned_tables[
+                    table_index - 1 :
+                ]:
+                    self._record_unfinished(
+                        summary,
+                        f"table={remaining_plan.table.display_name} | rows={remaining_count} | status=stopped | reason=operation stopped before table",
+                    )
                 return
 
             if pending_count == 0:
@@ -308,12 +359,29 @@ class DatabaseTranslationService:
                     target_language_id=config.target_language.id,
                     batch_size=config.batch_size,
                 ):
-                    if self._should_stop():
-                        self.logger.warning("Operation stopped by user request.")
-                        return
-
                     entity_key_values = self._entity_key_values(plan, source_row)
                     entity_value = format_entity_key_values(entity_key_values)
+                    if self._should_stop():
+                        self.logger.warning("Operation stopped by user request.")
+                        self._record_unfinished(
+                            summary,
+                            f"table={table.display_name} | row={entity_value} | status=stopped | reason=operation stopped before row",
+                        )
+                        remaining_rows = max(pending_count - table_processed - 1, 0)
+                        if remaining_rows:
+                            self._record_unfinished(
+                                summary,
+                                f"table={table.display_name} | rows={remaining_rows} | status=stopped | reason=operation stopped before row",
+                            )
+                        for remaining_plan, remaining_count, _characters in planned_tables[
+                            table_index :
+                        ]:
+                            self._record_unfinished(
+                                summary,
+                                f"table={remaining_plan.table.display_name} | rows={remaining_count} | status=stopped | reason=operation stopped before table",
+                            )
+                        return
+
                     row_status = "failed"
                     try:
                         target_exists = bool(source_row.get(TARGET_EXISTS_COLUMN_NAME))
@@ -387,6 +455,10 @@ class DatabaseTranslationService:
                         summary.failed_rows += 1
                         table_failed += 1
                         row_status = "failed"
+                        self._record_unfinished(
+                            summary,
+                            f"table={table.display_name} | row={entity_value} | status={unfinished_status(exc)} | reason={exc}",
+                        )
                         self.logger.exception(
                             "Row failed: %s | %s | reason=%s",
                             table.display_name,
@@ -430,6 +502,10 @@ class DatabaseTranslationService:
                 summary.failed_rows += remaining_table_rows
                 summary.processed_rows += remaining_table_rows
                 table_failed += remaining_table_rows
+                self._record_unfinished(
+                    summary,
+                    f"table={table.display_name} | rows={remaining_table_rows} | status={unfinished_status(exc)} | reason={exc}",
+                )
                 self.logger.exception(
                     "Table failed during row iteration: %s | processed=%s remaining_marked_failed=%s | reason=%s",
                     table.display_name,
@@ -448,6 +524,12 @@ class DatabaseTranslationService:
                 )
                 continue
 
+            unreported_rows = max(pending_count - table_processed, 0)
+            if unreported_rows:
+                self._record_unfinished(
+                    summary,
+                    f"table={table.display_name} | rows={unreported_rows} | status=not processed | reason=source row iterator ended early",
+                )
             self.logger.info(
                 "Table finished: %s | processed=%s failed=%s",
                 table.display_name,
@@ -571,9 +653,35 @@ class DatabaseTranslationService:
                         column_name,
                         row_identifier,
                     )
+                directionally_corrected = apply_html_direction(
+                    html_result.value,
+                    config.target_language,
+                )
+                if directionally_corrected != html_result.value:
+                    self.logger.info(
+                        "HTML direction normalized | table=%s | column=%s | row=%s | direction=%s | text-align=%s",
+                        plan.table.display_name,
+                        column_name,
+                        row_identifier,
+                        "rtl" if config.target_language.right_to_left else "ltr",
+                        "right" if config.target_language.right_to_left else "left",
+                    )
+                self._translation_cache[cache_key] = directionally_corrected
             translated_values[column_name] = self._translation_cache[cache_key]
 
         return translated_values
+
+    def _record_unfinished(self, summary: TranslationSummary, record: str) -> None:
+        summary.unfinished_records.append(single_line(record))
+
+    def _log_unfinished_records(self, summary: TranslationSummary) -> None:
+        self.logger.info("Unfinished records:")
+        self.logger.info("Count: %s", len(summary.unfinished_records))
+        if not summary.unfinished_records:
+            self.logger.info("  none")
+            return
+        for record in summary.unfinished_records:
+            self.logger.info("  - %s", record)
 
     def _translate_value(
         self,
@@ -715,3 +823,22 @@ def format_entity_key_values(values: dict[str, object]) -> str:
         f"{column_name}={value!r}"
         for column_name, value in values.items()
     )
+
+
+def unfinished_status(error: BaseException) -> str:
+    """Return a useful stable status for the end-of-run unfinished list."""
+
+    if isinstance(error, TimeoutError):
+        return "timed out"
+    error_name = type(error).__name__.casefold()
+    error_text = str(error).casefold()
+    if any(
+        marker in error_name or marker in error_text
+        for marker in ("timeout", "timed out", "timed-out", "hyt00", "hyt01")
+    ):
+        return "timed out"
+    return "failed"
+
+
+def single_line(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip()
