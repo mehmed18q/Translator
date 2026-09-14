@@ -78,3 +78,14 @@ class RuntimeConfig:
     # GUI all-table runs can omit selected tables after the review dialog.
     # Keeping this optional preserves compatibility with CLI and integrations.
     excluded_table_names: tuple[str, ...] = ()
+    # Destination languages are processed sequentially.  ``target_language``
+    # remains the first destination for backwards compatibility with callers
+    # that construct RuntimeConfig directly.
+    target_languages: tuple[LanguageOption, ...] = ()
+
+    def selected_target_languages(self) -> tuple[LanguageOption, ...]:
+        """Return the destination queue, falling back to the legacy field."""
+
+        if self.target_languages:
+            return tuple(dict.fromkeys(self.target_languages))
+        return (self.target_language,)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from translator_app.config import RuntimeConfig
 from translator_app.html_content import (
@@ -65,6 +65,14 @@ class ProgressSnapshot:
     table_processed_rows: int = 0
     table_remaining_rows: int = 0
     table_percent: float = 0.0
+    current_target_language: str | None = None
+    target_language_index: int = 0
+    total_target_languages: int = 1
+    completed_target_languages: int = 0
+    remaining_target_languages: int = 1
+    language_percent: float = 0.0
+    completed_target_language_codes: tuple[str, ...] = ()
+    remaining_target_language_codes: tuple[str, ...] = ()
 
 
 ProgressCallback = Callable[[ProgressSnapshot], None]
@@ -94,11 +102,56 @@ class DatabaseTranslationService:
         self.progress_callback = progress_callback
         self.cancel_callback = cancel_callback
         self.pause_callback = pause_callback
+        self._target_language_index = 1
+        self._total_target_languages = 1
+        self._completed_target_languages = 0
+        self._current_target_language: str | None = None
+        self._language_start_processed = 0
+        self._language_start_pending = 0
+        self._target_language_queue_codes: tuple[str, ...] = ()
 
     def run(self, config: RuntimeConfig) -> TranslationSummary:
         summary = TranslationSummary()
         try:
-            return self._run(config, summary)
+            target_languages = config.selected_target_languages()
+            self._total_target_languages = len(target_languages)
+            self._target_language_queue_codes = tuple(
+                language.code for language in target_languages
+            )
+            self._completed_target_languages = 0
+            for index, target_language in enumerate(target_languages, start=1):
+                self._target_language_index = index
+                self._current_target_language = target_language.code
+                self._language_start_processed = summary.processed_rows
+                self._language_start_pending = summary.pending_rows
+                target_config = replace(
+                    config,
+                    target_language=target_language,
+                    target_languages=(target_language,),
+                )
+                self.logger.info(
+                    "Translation queue item %s/%s: %s (%s)",
+                    index,
+                    len(target_languages),
+                    target_language.title,
+                    target_language.code,
+                )
+                self._run(target_config, summary)
+                if self._is_cancelled():
+                    self._emit_progress(
+                        summary,
+                        phase="stopped",
+                        current_target_language=target_language.code,
+                    )
+                    break
+                self._completed_target_languages = index
+                self._emit_progress(
+                    summary,
+                    phase="queue-finished" if index == len(target_languages) else "language-finished",
+                    current_target_language=target_language.code,
+                    total_tables=0,
+                )
+            return summary
         except KeyboardInterrupt:
             self._record_unfinished(
                 summary,
@@ -138,7 +191,7 @@ class DatabaseTranslationService:
             schema_name=config.schema_name,
             table_name=config.table_name,
         )
-        summary.discovered_tables = len(tables)
+        summary.discovered_tables += len(tables)
         self._emit_progress(summary, phase="discovered", total_tables=len(tables))
 
         if not tables:
@@ -757,6 +810,7 @@ class DatabaseTranslationService:
         total_tables: int = 0,
         table_pending_rows: int = 0,
         table_processed_rows: int = 0,
+        current_target_language: str | None = None,
     ) -> None:
         if not self.progress_callback:
             return
@@ -783,6 +837,25 @@ class DatabaseTranslationService:
             table_processed_rows=table_processed_rows,
             table_remaining_rows=table_remaining_rows,
             table_percent=calculate_percent(table_processed_rows, table_pending_rows),
+            current_target_language=current_target_language
+            or getattr(self, "_current_target_language", None),
+            target_language_index=self._target_language_index,
+            total_target_languages=self._total_target_languages,
+            completed_target_languages=self._completed_target_languages,
+            remaining_target_languages=max(
+                self._total_target_languages - self._target_language_index,
+                0,
+            ),
+            language_percent=calculate_percent(
+                max(summary.processed_rows - self._language_start_processed, 0),
+                max(summary.pending_rows - self._language_start_pending, 0),
+            ),
+            completed_target_language_codes=self._target_language_queue_codes[
+                : self._completed_target_languages
+            ],
+            remaining_target_language_codes=self._target_language_queue_codes[
+                self._target_language_index :
+            ],
         )
 
         try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from translator_app.config import RetrySettings, RuntimeConfig
@@ -218,6 +219,40 @@ class ServiceUpdateTests(unittest.TestCase):
             any("row=SampleId=1" in message for message in handler.messages),
             handler.messages,
         )
+
+    def test_processes_multiple_target_languages_in_order(self) -> None:
+        row = {
+            "SampleId": 1,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        repository = FakeRepository([row])
+        translator = PrefixTranslator()
+        snapshots = []
+        service = DatabaseTranslationService(
+            schema_reader=FakeSchemaReader([build_table()]),
+            repository=repository,
+            translator=translator,
+            logger=logging.getLogger("test_service_update_queue"),
+            progress_callback=snapshots.append,
+        )
+        config = replace(
+            build_config(),
+            target_languages=(get_language(2), get_language(3)),
+        )
+
+        summary = service.run(config)
+
+        self.assertEqual(summary.inserted_rows, 2)
+        self.assertEqual(
+            [item["target_language_id"] for item in repository.inserts],
+            [2, 3],
+        )
+        self.assertEqual(snapshots[-1].completed_target_language_codes, ("en", "ar"))
+        self.assertEqual(snapshots[-1].remaining_target_language_codes, ())
 
 
 def build_service(

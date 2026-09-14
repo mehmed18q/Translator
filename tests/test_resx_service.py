@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -136,6 +137,39 @@ class ResxServiceTests(unittest.TestCase):
                 read_resx_values(resource_dir / "Resources.ru.resx")["Required"],
                 "Enter {0} [ru]",
             )
+
+    def test_processes_multiple_target_languages_in_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            resource_dir = Path(temp_dir)
+            write_resx(resource_dir / "Resources.fa.resx", {"Hello": "Salam"})
+            translator = FakeTranslator()
+            snapshots = []
+            service = ResxTranslationService(
+                translator=translator,
+                logger=logging.getLogger("test_resx_service_queue"),
+                progress_callback=snapshots.append,
+            )
+            config = replace(
+                build_config(resource_dir, ("Resources.resx",), 1, 2),
+                target_languages=(get_language(2), get_language(3)),
+            )
+
+            summary = service.run(config)
+
+            self.assertEqual(summary.created_files, 2)
+            self.assertEqual(
+                read_resx_values(resource_dir / "Resources.resx")["Hello"],
+                "Salam [en]",
+            )
+            self.assertEqual(
+                read_resx_values(resource_dir / "Resources.ar.resx")["Hello"],
+                "Salam [ar]",
+            )
+            self.assertEqual(
+                snapshots[-1].completed_target_language_codes,
+                ("en", "ar"),
+            )
+            self.assertEqual(snapshots[-1].remaining_target_language_codes, ())
 
 
 def build_service(translator: Translator) -> ResxTranslationService:

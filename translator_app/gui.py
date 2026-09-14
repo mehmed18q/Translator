@@ -16,6 +16,7 @@ from pathlib import Path
 from tkinter import (
     BooleanVar,
     Canvas,
+    Menu,
     PhotoImage,
     StringVar,
     TclError,
@@ -238,6 +239,75 @@ class ScrollableFrame(ttk.Frame):
         self.canvas.xview_scroll(units, "units")
         return True
 
+
+class MultiLanguageDropdown(ttk.Frame):
+    """A compact dropdown containing checkboxes for destination languages."""
+
+    def __init__(
+        self,
+        parent: ttk.Frame,
+        *,
+        languages: dict[int, object],
+        selected_ids: tuple[int, ...] = (),
+        command: object | None = None,
+    ) -> None:
+        super().__init__(parent, style="Card.TFrame")
+        self._languages = languages
+        self._command = command
+        self._variables: dict[int, BooleanVar] = {}
+        self._labels: dict[int, str] = {}
+        self._selection_text = StringVar()
+        self.menu = Menu(self, tearoff=False)
+        for language_id, language in languages.items():
+            self._variables[language_id] = BooleanVar(
+                self,
+                value=language_id in selected_ids,
+            )
+            label = language_label(language_id)
+            self._labels[language_id] = label
+            self.menu.add_checkbutton(
+                label=label,
+                variable=self._variables[language_id],
+                command=self._changed,
+            )
+        self.button = ttk.Menubutton(
+            self,
+            textvariable=self._selection_text,
+            direction="below",
+        )
+        self.button.configure(menu=self.menu)
+        self.button.grid(row=0, column=0, sticky="ew")
+        self.columnconfigure(0, weight=1)
+        self._refresh_text()
+
+    def selected_ids(self) -> tuple[int, ...]:
+        return tuple(
+            language_id
+            for language_id in self._languages
+            if self._variables[language_id].get()
+        )
+
+    def set_selected_ids(self, language_ids: tuple[int, ...] | list[int]) -> None:
+        selected = set(language_ids)
+        for language_id, variable in self._variables.items():
+            variable.set(language_id in selected)
+        self._refresh_text()
+
+    def _changed(self) -> None:
+        self._refresh_text()
+        if callable(self._command):
+            self._command()
+
+    def _refresh_text(self) -> None:
+        selected = self.selected_ids()
+        if not selected:
+            self._selection_text.set("Select target languages")
+            return
+        titles = [self._labels[language_id] for language_id in selected]
+        if len(titles) <= 2:
+            self._selection_text.set(", ".join(titles))
+        else:
+            self._selection_text.set(f"{len(titles)} languages selected")
 
 class QueueLogHandler(logging.Handler):
     def __init__(self, events: queue.Queue[tuple[str, object]]) -> None:
@@ -497,7 +567,12 @@ class TranslatorGuiApp:
         self.log_dir_var = StringVar(value=env.get("LOG_DIR", "logs"))
 
         self.source_language_var = StringVar(value=language_label(1))
-        self.target_language_var = StringVar(value=language_label(2))
+        target_ids = parse_language_ids(
+            env.get("TARGET_LANGUAGE_IDS") or env.get("TARGET_LANGUAGE_ID"),
+            default=(2,),
+        )
+        self.target_language_var = StringVar(value=language_label(target_ids[0]))
+        self.target_language_ids = target_ids
         self.operation_schema_var = StringVar(value="")
         self.operation_table_var = StringVar(value="")
         self.test_table_var = StringVar(value="")
@@ -509,9 +584,13 @@ class TranslatorGuiApp:
         self.resx_source_language_var = StringVar(
             value=language_label(parse_language_id(env.get("RESX_SOURCE_LANGUAGE_ID"), 1))
         )
-        self.resx_target_language_var = StringVar(
-            value=language_label(parse_language_id(env.get("RESX_TARGET_LANGUAGE_ID"), 2))
+        resx_target_ids = parse_language_ids(
+            env.get("RESX_TARGET_LANGUAGE_IDS")
+            or env.get("RESX_TARGET_LANGUAGE_ID"),
+            default=(2,),
         )
+        self.resx_target_language_var = StringVar(value=language_label(resx_target_ids[0]))
+        self.resx_target_language_ids = resx_target_ids
         self.resx_resources_file_var = BooleanVar(
             value=parse_bool(env.get("RESX_INCLUDE_RESOURCES", "true"))
         )
@@ -546,6 +625,7 @@ class TranslatorGuiApp:
         self.operation_duration_var = StringVar(value="-")
         self.operation_average_rate_var = StringVar(value="-")
         self.operation_estimated_finish_var = StringVar(value="-")
+        self.target_language_progress_var = StringVar(value="Languages: 0/0 completed · 0 remaining")
 
         self.resx_status_var = StringVar(value="Ready")
         self.resx_log_file_var = StringVar(value="-")
@@ -571,6 +651,7 @@ class TranslatorGuiApp:
         self.resx_duration_var = StringVar(value="-")
         self.resx_average_rate_var = StringVar(value="-")
         self.resx_estimated_finish_var = StringVar(value="-")
+        self.resx_target_language_progress_var = StringVar(value="Languages: 0/0 completed · 0 remaining")
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -828,7 +909,16 @@ class TranslatorGuiApp:
 
         language_values = [language_label(language_id) for language_id in LANGUAGES]
         add_combo(inputs, 0, "Source", self.source_language_var, language_values, 0)
-        add_combo(inputs, 0, "Target", self.target_language_var, language_values, 2)
+        ttk.Label(inputs, text="Target", style="Field.TLabel").grid(
+            row=0, column=2, sticky="w", padx=(12, 8), pady=4
+        )
+        self.target_language_selector = MultiLanguageDropdown(
+            inputs,
+            languages=LANGUAGES,
+            selected_ids=self.target_language_ids,
+            command=self._target_languages_changed,
+        )
+        self.target_language_selector.grid(row=0, column=3, sticky="ew", pady=4)
         add_entry(inputs, 1, "Schema filter", self.operation_schema_var, 0)
         add_entry(inputs, 1, "Only table", self.operation_table_var, 2)
         add_entry(inputs, 2, "Test table", self.test_table_var, 0)
@@ -970,8 +1060,19 @@ class TranslatorGuiApp:
             sticky="w",
         )
 
+        self.language_progress = ttk.Progressbar(progress, maximum=100)
+        self.language_progress.grid(row=7, column=0, columnspan=4, sticky="ew", pady=8)
+        ttk.Label(progress, text="Language queue", style="Field.TLabel").grid(
+            row=8, column=0, sticky="w"
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.target_language_progress_var,
+            style="Field.TLabel",
+        ).grid(row=8, column=1, columnspan=3, sticky="w")
+
         metrics = ttk.Frame(progress, style="Card.TFrame")
-        metrics.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        metrics.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         for column_index in range(4):
             metrics.columnconfigure(column_index, weight=1)
 
@@ -1033,7 +1134,16 @@ class TranslatorGuiApp:
 
         language_values = [language_label(language_id) for language_id in LANGUAGES]
         add_combo(inputs, 1, "Source", self.resx_source_language_var, language_values, 0)
-        add_combo(inputs, 1, "Target", self.resx_target_language_var, language_values, 2)
+        ttk.Label(inputs, text="Target", style="Field.TLabel").grid(
+            row=1, column=2, sticky="w", padx=(12, 8), pady=4
+        )
+        self.resx_target_language_selector = MultiLanguageDropdown(
+            inputs,
+            languages=LANGUAGES,
+            selected_ids=self.resx_target_language_ids,
+            command=self._resx_target_languages_changed,
+        )
+        self.resx_target_language_selector.grid(row=1, column=3, sticky="ew", pady=4)
 
         files = ttk.Frame(inputs, style="Card.TFrame")
         files.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(8, 0))
@@ -1199,8 +1309,21 @@ class TranslatorGuiApp:
             style="Field.TLabel",
         ).grid(row=6, column=1, sticky="w")
 
+        self.resx_language_progress = ttk.Progressbar(progress, maximum=100)
+        self.resx_language_progress.grid(
+            row=7, column=0, columnspan=4, sticky="ew", pady=8
+        )
+        ttk.Label(progress, text="Language queue", style="Field.TLabel").grid(
+            row=8, column=0, sticky="w"
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.resx_target_language_progress_var,
+            style="Field.TLabel",
+        ).grid(row=8, column=1, columnspan=3, sticky="w")
+
         metrics = ttk.Frame(progress, style="Card.TFrame")
-        metrics.grid(row=7, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        metrics.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(16, 0))
         for column_index in range(4):
             metrics.columnconfigure(column_index, weight=1)
 
@@ -1852,21 +1975,52 @@ class TranslatorGuiApp:
             )
             repository = SqlServerLocalizationRepository(connection)
             items: list[TableSelectionItem] = []
+            target_languages = config.selected_target_languages()
             for table in tables:
                 try:
                     plan = build_table_translation_plan(table)
-                    pending_rows = run_with_retry(
-                        lambda plan=plan: repository.count_pending_rows(
-                            plan,
-                            source_language_id=config.source_language.id,
-                            target_language_id=config.target_language.id,
-                        ),
-                        operation_name=f"count {table.display_name}",
-                        attempts=config.retry.attempts,
-                        initial_delay_seconds=config.retry.initial_delay_seconds,
-                        backoff_factor=config.retry.backoff_factor,
-                        logger=logging.getLogger("database_translator"),
-                    )
+                    pending_rows = 0
+                    text_characters = 0
+                    for target_language in target_languages:
+                        target_pending_rows = run_with_retry(
+                            lambda plan=plan, target_language=target_language: repository.count_pending_rows(
+                                plan,
+                                source_language_id=config.source_language.id,
+                                target_language_id=target_language.id,
+                            ),
+                            operation_name=(
+                                f"count {table.display_name} ({target_language.code})"
+                            ),
+                            attempts=config.retry.attempts,
+                            initial_delay_seconds=config.retry.initial_delay_seconds,
+                            backoff_factor=config.retry.backoff_factor,
+                            logger=logging.getLogger("database_translator"),
+                        )
+                        pending_rows += int(target_pending_rows)
+                        if target_pending_rows:
+                            try:
+                                text_characters += run_with_retry(
+                                    lambda plan=plan, target_language=target_language: repository.count_pending_text_characters(
+                                        plan,
+                                        source_language_id=config.source_language.id,
+                                        target_language_id=target_language.id,
+                                    ),
+                                    operation_name=(
+                                        f"measure text in {table.display_name} ({target_language.code})"
+                                    ),
+                                    attempts=config.retry.attempts,
+                                    initial_delay_seconds=config.retry.initial_delay_seconds,
+                                    backoff_factor=config.retry.backoff_factor,
+                                    logger=logging.getLogger("database_translator"),
+                                )
+                            except Exception as exc:
+                                text_characters += int(target_pending_rows)
+                                logging.getLogger("database_translator").warning(
+                                    "Could not measure text size for %s (%s); using pending rows: %s",
+                                    table.display_name,
+                                    target_language.code,
+                                    exc,
+                                )
                 except Exception as exc:
                     items.append(
                         TableSelectionItem(
@@ -1877,30 +2031,8 @@ class TranslatorGuiApp:
                     )
                     continue
 
-                text_characters = 0
-                if pending_rows:
-                    try:
-                        text_characters = run_with_retry(
-                            lambda plan=plan: repository.count_pending_text_characters(
-                                plan,
-                                source_language_id=config.source_language.id,
-                                target_language_id=config.target_language.id,
-                            ),
-                            operation_name=f"measure text in {table.display_name}",
-                            attempts=config.retry.attempts,
-                            initial_delay_seconds=config.retry.initial_delay_seconds,
-                            backoff_factor=config.retry.backoff_factor,
-                            logger=logging.getLogger("database_translator"),
-                        )
-                    except Exception as exc:
-                        # Size is only used for ordering. Keep the table
-                        # selectable if the optional estimate is unavailable.
-                        logging.getLogger("database_translator").warning(
-                            "Could not measure text size for %s; using pending rows: %s",
-                            table.display_name,
-                            exc,
-                        )
-                        text_characters = pending_rows
+                if pending_rows and not text_characters:
+                    text_characters = pending_rows
                 items.append(
                     TableSelectionItem(
                         display_name=table.display_name,
@@ -2091,6 +2223,24 @@ class TranslatorGuiApp:
             if button is not None:
                 button.configure(text=text, style=style)
 
+    def _target_languages_changed(self) -> None:
+        selected = self.target_language_selector.selected_ids()
+        if selected:
+            self.target_language_var.set(language_label(selected[0]))
+
+    def _resx_target_languages_changed(self) -> None:
+        selected = self.resx_target_language_selector.selected_ids()
+        if selected:
+            self.resx_target_language_var.set(language_label(selected[0]))
+
+    def _selected_target_ids(self, selector_name: str, variable: StringVar) -> tuple[int, ...]:
+        selector = getattr(self, selector_name, None)
+        if selector is not None:
+            selected = tuple(selector.selected_ids())
+            if selected:
+                return selected
+        return (language_id_from_label(variable.get()),)
+
     def _build_runtime_config(
         self,
         *,
@@ -2098,16 +2248,21 @@ class TranslatorGuiApp:
         table_name: str | None,
     ) -> RuntimeConfig:
         source_language_id = language_id_from_label(self.source_language_var.get())
-        target_language_id = language_id_from_label(self.target_language_var.get())
-        if source_language_id == target_language_id:
+        target_ids = self._selected_target_ids(
+            "target_language_selector", self.target_language_var
+        )
+        if not target_ids:
+            raise ValueError("Select at least one target language.")
+        if source_language_id in target_ids:
             raise ValueError("Source and target languages must be different.")
+        target_languages = tuple(get_language(language_id) for language_id in target_ids)
 
         connection_settings = self._build_connection_settings()
 
         return RuntimeConfig(
             connection_string=connection_settings.build_connection_string(),
             source_language=get_language(source_language_id),
-            target_language=get_language(target_language_id),
+            target_language=target_languages[0],
             dry_run=self.dry_run_var.get(),
             schema_name=normalize_sql_name(schema_name),
             table_name=normalize_sql_name(table_name),
@@ -2139,6 +2294,7 @@ class TranslatorGuiApp:
                     1,
                 ),
             ),
+            target_languages=target_languages,
         )
 
     def _build_resx_runtime_config(
@@ -2147,8 +2303,12 @@ class TranslatorGuiApp:
         force_dry_run: bool = False,
     ) -> tuple[ResxTranslationConfig, RuntimeConfig]:
         source_language_id = language_id_from_label(self.resx_source_language_var.get())
-        target_language_id = language_id_from_label(self.resx_target_language_var.get())
-        if source_language_id == target_language_id:
+        target_ids = self._selected_target_ids(
+            "resx_target_language_selector", self.resx_target_language_var
+        )
+        if not target_ids:
+            raise ValueError("Select at least one target language.")
+        if source_language_id in target_ids:
             raise ValueError("Source and target languages must be different.")
 
         resource_dir_text = self.resx_resource_dir_var.get().strip()
@@ -2177,7 +2337,8 @@ class TranslatorGuiApp:
             ),
         )
         source_language = get_language(source_language_id)
-        target_language = get_language(target_language_id)
+        target_languages = tuple(get_language(language_id) for language_id in target_ids)
+        target_language = target_languages[0]
         dry_run = True if force_dry_run else self.resx_dry_run_var.get()
 
         resx_config = ResxTranslationConfig(
@@ -2191,6 +2352,7 @@ class TranslatorGuiApp:
                 1,
             ),
             retry=retry,
+            target_languages=target_languages,
         )
         translator_config = RuntimeConfig(
             connection_string="",
@@ -2214,6 +2376,7 @@ class TranslatorGuiApp:
             libretranslate_api_key=self.libretranslate_api_key_var.get().strip() or None,
             log_dir=Path(self.log_dir_var.get().strip() or "logs"),
             retry=retry,
+            target_languages=target_languages,
         )
         return resx_config, translator_config
 
@@ -2299,12 +2462,29 @@ class TranslatorGuiApp:
             "BATCH_SIZE": self.batch_size_var.get().strip(),
             "PROGRESS_EVERY": self.progress_every_var.get().strip(),
             "LOG_DIR": self.log_dir_var.get().strip(),
+            "TARGET_LANGUAGE_IDS": ",".join(
+                str(language_id)
+                for language_id in self._selected_target_ids(
+                    "target_language_selector", self.target_language_var
+                )
+            ),
+            "TARGET_LANGUAGE_ID": str(
+                self._selected_target_ids(
+                    "target_language_selector", self.target_language_var
+                )[0]
+            ),
             "RESX_RESOURCE_DIR": self.resx_resource_dir_var.get().strip(),
             "RESX_SOURCE_LANGUAGE_ID": str(
                 language_id_from_label(self.resx_source_language_var.get())
             ),
             "RESX_TARGET_LANGUAGE_ID": str(
                 language_id_from_label(self.resx_target_language_var.get())
+            ),
+            "RESX_TARGET_LANGUAGE_IDS": ",".join(
+                str(language_id)
+                for language_id in self._selected_target_ids(
+                    "resx_target_language_selector", self.resx_target_language_var
+                )
             ),
             "RESX_INCLUDE_RESOURCES": bool_to_env(self.resx_resources_file_var.get()),
             "RESX_INCLUDE_MESSAGES": bool_to_env(self.resx_messages_file_var.get()),
@@ -2376,8 +2556,15 @@ class TranslatorGuiApp:
         self.current_table_var.set(snapshot.current_table or "-")
         self.overall_progress["value"] = snapshot.percent
         self.table_progress["value"] = snapshot.table_percent
+        self.language_progress["value"] = queue_progress_percent(snapshot)
         self.overall_percent_var.set(f"{snapshot.percent:.2f}%")
         self.table_percent_var.set(f"{snapshot.table_percent:.2f}%")
+        self.target_language_progress_var.set(
+            f"Language {snapshot.target_language_index}/{snapshot.total_target_languages}: "
+            f"{snapshot.current_target_language or '-'} · "
+            f"Completed: {format_language_code_list(snapshot.completed_target_language_codes)} · "
+            f"Remaining: {format_language_code_list(snapshot.remaining_target_language_codes)}"
+        )
         self.discovered_tables_var.set(str(snapshot.discovered_tables))
         self.eligible_tables_var.set(str(snapshot.eligible_tables))
         self.skipped_tables_var.set(str(snapshot.skipped_tables))
@@ -2406,8 +2593,15 @@ class TranslatorGuiApp:
         self.resx_current_key_var.set(snapshot.current_key or "-")
         self.resx_overall_progress["value"] = snapshot.percent
         self.resx_file_progress["value"] = snapshot.file_percent
+        self.resx_language_progress["value"] = queue_progress_percent(snapshot)
         self.resx_overall_percent_var.set(f"{snapshot.percent:.2f}%")
         self.resx_file_percent_var.set(f"{snapshot.file_percent:.2f}%")
+        self.resx_target_language_progress_var.set(
+            f"Language {snapshot.target_language_index}/{snapshot.total_target_languages}: "
+            f"{snapshot.current_target_language or '-'} · "
+            f"Completed: {format_language_code_list(snapshot.completed_target_language_codes)} · "
+            f"Remaining: {format_language_code_list(snapshot.remaining_target_language_codes)}"
+        )
         self.resx_discovered_files_var.set(str(snapshot.discovered_files))
         self.resx_eligible_files_var.set(str(snapshot.eligible_files))
         self.resx_skipped_files_var.set(str(snapshot.skipped_files))
@@ -2534,6 +2728,8 @@ class TranslatorGuiApp:
         self.current_table_var.set("-")
         self.overall_progress["value"] = 0
         self.table_progress["value"] = 0
+        self.language_progress["value"] = 0
+        self.target_language_progress_var.set("Languages: 0/0 completed · 0 remaining")
         self.overall_percent_var.set("0.00%")
         self.table_percent_var.set("0.00%")
         self.discovered_tables_var.set("0")
@@ -2563,6 +2759,8 @@ class TranslatorGuiApp:
         self.resx_current_key_var.set("-")
         self.resx_overall_progress["value"] = 0
         self.resx_file_progress["value"] = 0
+        self.resx_language_progress["value"] = 0
+        self.resx_target_language_progress_var.set("Languages: 0/0 completed · 0 remaining")
         self.resx_overall_percent_var.set("0.00%")
         self.resx_file_percent_var.set("0.00%")
         self.resx_discovered_files_var.set("0")
@@ -3651,6 +3849,24 @@ def parse_language_id(value: str | None, default: int) -> int:
     return default
 
 
+def parse_language_ids(
+    value: str | None,
+    *,
+    default: tuple[int, ...] = (2,),
+) -> tuple[int, ...]:
+    """Parse a comma-separated language queue while preserving its order."""
+
+    parsed: list[int] = []
+    for raw_value in str(value or "").split(","):
+        try:
+            language_id = int(raw_value.strip())
+        except ValueError:
+            continue
+        if language_id in LANGUAGES and language_id not in parsed:
+            parsed.append(language_id)
+    return tuple(parsed) or tuple(default)
+
+
 def normalize_sql_name(value: str | None) -> str | None:
     if value is None:
         return None
@@ -3693,6 +3909,15 @@ def language_label(language_id: int) -> str:
     return f"{language.id} - {title} ({language.code})"
 
 
+def format_language_code_list(codes: tuple[str, ...] | list[str]) -> str:
+    if not codes:
+        return "-"
+    titles_by_code = {language.code: language.title for language in LANGUAGES.values()}
+    return ", ".join(
+        f"{titles_by_code.get(code, code)} ({code})" for code in codes
+    )
+
+
 def language_id_from_label(label: str) -> int:
     raw_id = label.split("-", 1)[0].strip()
     return get_language(int(raw_id)).id
@@ -3707,6 +3932,9 @@ def phase_label(phase: str) -> str:
         "table-finished": "Table finished",
         "table-failed": "Table failed",
         "finished": "Finished",
+        "language-finished": "Language finished",
+        "queue-finished": "All languages finished",
+        "stopped": "Stopped",
     }
     return labels.get(phase, phase)
 
@@ -3719,8 +3947,25 @@ def resx_phase_label(phase: str) -> str:
         "running": "Running",
         "file-finished": "File finished",
         "finished": "Finished",
+        "language-finished": "Language finished",
+        "queue-finished": "All languages finished",
+        "stopped": "Stopped",
     }
     return labels.get(phase, phase)
+
+
+def queue_progress_percent(snapshot: object) -> float:
+    """Convert per-language queue metadata into a 0–100 progress value."""
+
+    total = max(int(getattr(snapshot, "total_target_languages", 1)), 1)
+    completed = max(int(getattr(snapshot, "completed_target_languages", 0)), 0)
+    if completed >= total:
+        return 100.0
+    language_percent = min(
+        max(float(getattr(snapshot, "language_percent", 0.0)), 0.0),
+        100.0,
+    )
+    return min((completed + language_percent / 100.0) / total * 100.0, 100.0)
 
 
 def http_json(

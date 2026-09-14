@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.2.6" src="https://img.shields.io/badge/version-0.2.6-2563eb">
+  <img alt="Version 1.2.6" src="https://img.shields.io/badge/version-1.2.6-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <strong>Version 0.2.6</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 1.2.6</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -30,7 +30,7 @@ The Windows executable is self-contained: the destination computer does **not** 
 
 ## Screenshots
 
-The screenshots below show version 0.2.6 with the main application tabs and workflow provided by the Windows executable.
+The screenshots below show version 1.2.6 with the main application tabs and workflow provided by the Windows executable.
 
 | Connection | Operation |
 |:---:|:---:|
@@ -52,6 +52,9 @@ The screenshots below show version 0.2.6 with the main application tabs and work
 - RESX scanning, creation, and translation with existing values preserved.
 - Separate Pause/Resume and permanent Stop controls for database and RESX jobs.
 - Live progress, retries, translation caching, and detailed logs.
+- Checkbox-based destination language queues. Selected languages run sequentially,
+  with per-language progress and completed/remaining counters for both database
+  tables and RESX resources.
 - Google-first translation with automatic fallback to LibreTranslate when
   Google reports a rate limit or quota response.
 - Persistent settings and logs beside the packaged executable.
@@ -111,15 +114,15 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 | Tab          | Purpose |
 |--------------|---|
 | `Connection` | Configure and test SQL Server, configure the LibreTranslate fallback, set retry/runtime options, and save settings. |
-| `Operation`  | Select source and target languages, filter by schema/table, review and exclude tables before an all-table run, and pause, resume, or stop the active database job. |
-| `Resources`  | Scan or translate `.resx` files, review progress, and pause, resume, or stop the active resource job. |
+| `Operation`  | Select a source and one or more checkbox-based destination languages, filter by schema/table, review and exclude tables before an all-table run, and pause, resume, or stop the active database job. |
+| `Resources`  | Scan or translate `.resx` files into the selected destination language queue, review per-language progress and completed/remaining languages, and pause, resume, or stop the active resource job. |
 | `Logs`       | Follow the current operation in real time and clear the on-screen log view. Clearing the view does not delete the log file. |
 | `ReadMe`     | Read this documentation inside the application as formatted Markdown. |
 
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 0.2.6 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 1.2.6 | GitHub
 ```
 
 When `Run All Tables` is selected, a modal review lists the tables ordered by
@@ -347,14 +350,14 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **72 tests**.
+The current release passes **74 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "0.2.6"
+__version__ = "1.2.6"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

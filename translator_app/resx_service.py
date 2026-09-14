@@ -4,7 +4,7 @@ import copy
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
@@ -46,6 +46,12 @@ class ResxTranslationConfig:
     dry_run: bool
     progress_every: int
     retry: RetrySettings
+    target_languages: tuple[LanguageOption, ...] = ()
+
+    def selected_target_languages(self) -> tuple[LanguageOption, ...]:
+        if self.target_languages:
+            return tuple(dict.fromkeys(self.target_languages))
+        return (self.target_language,)
 
 
 @dataclass
@@ -90,6 +96,14 @@ class ResxProgressSnapshot:
     file_processed_entries: int = 0
     file_remaining_entries: int = 0
     file_percent: float = 0.0
+    current_target_language: str | None = None
+    target_language_index: int = 0
+    total_target_languages: int = 1
+    completed_target_languages: int = 0
+    remaining_target_languages: int = 1
+    language_percent: float = 0.0
+    completed_target_language_codes: tuple[str, ...] = ()
+    remaining_target_language_codes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -138,11 +152,59 @@ class ResxTranslationService:
         self.cancel_callback = cancel_callback
         self.pause_callback = pause_callback
         self._translation_cache: dict[tuple[str, str, str, str], str] = {}
+        self._target_language_index = 1
+        self._total_target_languages = 1
+        self._completed_target_languages = 0
+        self._current_target_language: str | None = None
+        self._language_start_processed = 0
+        self._language_start_pending = 0
+        self._language_start_total = 0
+        self._target_language_queue_codes: tuple[str, ...] = ()
 
     def run(self, config: ResxTranslationConfig) -> ResxTranslationSummary:
-        summary = ResxTranslationSummary(discovered_files=len(config.base_file_names))
+        summary = ResxTranslationSummary()
         try:
-            return self._run(config, summary)
+            target_languages = config.selected_target_languages()
+            self._total_target_languages = len(target_languages)
+            self._target_language_queue_codes = tuple(
+                language.code for language in target_languages
+            )
+            self._completed_target_languages = 0
+            for index, target_language in enumerate(target_languages, start=1):
+                self._target_language_index = index
+                self._current_target_language = target_language.code
+                summary.discovered_files += len(config.base_file_names)
+                self._language_start_processed = summary.processed_entries
+                self._language_start_pending = summary.pending_entries
+                self._language_start_total = summary.total_entries
+                target_config = replace(
+                    config,
+                    target_language=target_language,
+                    target_languages=(target_language,),
+                )
+                self.logger.info(
+                    "RESX translation queue item %s/%s: %s (%s)",
+                    index,
+                    len(target_languages),
+                    target_language.title,
+                    target_language.code,
+                )
+                self._run(target_config, summary)
+                if self._is_cancelled():
+                    self._emit_progress(
+                        summary,
+                        phase="stopped",
+                        current_target_language=target_language.code,
+                    )
+                    break
+                self._completed_target_languages = index
+                self._emit_progress(
+                    summary,
+                    phase="queue-finished" if index == len(target_languages) else "language-finished",
+                    current_target_language=target_language.code,
+                    total_files=0,
+                )
+            return summary
         except KeyboardInterrupt:
             self._record_unfinished(
                 summary,
@@ -640,6 +702,7 @@ class ResxTranslationService:
         total_files: int = 0,
         file_pending_entries: int = 0,
         file_processed_entries: int = 0,
+        current_target_language: str | None = None,
     ) -> None:
         if not self.progress_callback:
             return
@@ -670,6 +733,24 @@ class ResxTranslationService:
             file_processed_entries=file_processed_entries,
             file_remaining_entries=file_remaining_entries,
             file_percent=calculate_percent(file_processed_entries, file_pending_entries),
+            current_target_language=current_target_language or self._current_target_language,
+            target_language_index=self._target_language_index,
+            total_target_languages=self._total_target_languages,
+            completed_target_languages=self._completed_target_languages,
+            remaining_target_languages=max(
+                self._total_target_languages - self._target_language_index,
+                0,
+            ),
+            language_percent=calculate_percent(
+                max(summary.processed_entries - self._language_start_processed, 0),
+                max(summary.total_entries - self._language_start_total, 0),
+            ),
+            completed_target_language_codes=self._target_language_queue_codes[
+                : self._completed_target_languages
+            ],
+            remaining_target_language_codes=self._target_language_queue_codes[
+                self._target_language_index :
+            ],
         )
 
         try:
