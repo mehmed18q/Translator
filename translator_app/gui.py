@@ -28,6 +28,11 @@ from tkinter import scrolledtext
 from tkinter import ttk
 
 from translator_app import __version__
+from translator_app.cleanup_service import (
+    CleanupConfig,
+    CleanupProgressSnapshot,
+    DatabaseCleanupService,
+)
 from translator_app.config import (
     RetrySettings,
     RuntimeConfig,
@@ -54,6 +59,7 @@ from translator_app.sqlserver import (
 )
 from translator_app.translators import create_translator
 from translator_app.translators.base import Translator
+from translator_app.unfinished_report import format_unfinished_report
 
 
 ENV_PATH = application_dir() / ".env"
@@ -353,14 +359,19 @@ class TranslatorGuiApp:
         self.running_job_name = ""
         self.operation_started_monotonic: float | None = None
         self.resx_started_monotonic: float | None = None
+        self.cleanup_started_monotonic: float | None = None
         self.operation_paused_started_monotonic: float | None = None
         self.resx_paused_started_monotonic: float | None = None
+        self.cleanup_paused_started_monotonic: float | None = None
         self.operation_paused_total_seconds = 0.0
         self.resx_paused_total_seconds = 0.0
+        self.cleanup_paused_total_seconds = 0.0
         self.operation_last_processed_rows = 0
         self.operation_last_remaining_rows = 0
         self.resx_last_processed_entries = 0
         self.resx_last_remaining_entries = 0
+        self.cleanup_last_processed_rows = 0
+        self.cleanup_last_remaining_rows = 0
 
         self.env_values = read_env_values(ENV_PATH)
         self._configure_style()
@@ -578,6 +589,18 @@ class TranslatorGuiApp:
         self.test_table_var = StringVar(value="")
         self.dry_run_var = BooleanVar(value=True)
 
+        cleanup_ids = parse_language_ids(
+            env.get("CLEANUP_LANGUAGE_IDS"),
+            default=target_ids,
+        )
+        self.cleanup_language_var = StringVar(value=language_label(cleanup_ids[0]))
+        self.cleanup_language_ids = cleanup_ids
+        self.cleanup_schema_var = StringVar(value="")
+        self.cleanup_table_var = StringVar(value="")
+        self.cleanup_dry_run_var = BooleanVar(
+            value=parse_bool(env.get("CLEANUP_DRY_RUN", "true"))
+        )
+
         self.resx_resource_dir_var = StringVar(
             value=env.get("RESX_RESOURCE_DIR", "")
         )
@@ -653,6 +676,28 @@ class TranslatorGuiApp:
         self.resx_estimated_finish_var = StringVar(value="-")
         self.resx_target_language_progress_var = StringVar(value="Languages: 0/0 completed · 0 remaining")
 
+        self.cleanup_status_var = StringVar(value="Ready")
+        self.cleanup_log_file_var = StringVar(value="-")
+        self.cleanup_current_table_var = StringVar(value="-")
+        self.cleanup_overall_percent_var = StringVar(value="0.00%")
+        self.cleanup_table_percent_var = StringVar(value="0.00%")
+        self.cleanup_discovered_tables_var = StringVar(value="0")
+        self.cleanup_eligible_tables_var = StringVar(value="0")
+        self.cleanup_skipped_tables_var = StringVar(value="0")
+        self.cleanup_matched_rows_var = StringVar(value="0")
+        self.cleanup_processed_rows_var = StringVar(value="0")
+        self.cleanup_remaining_rows_var = StringVar(value="0")
+        self.cleanup_deleted_rows_var = StringVar(value="0")
+        self.cleanup_failed_rows_var = StringVar(value="0")
+        self.cleanup_started_var = StringVar(value="-")
+        self.cleanup_finished_var = StringVar(value="-")
+        self.cleanup_duration_var = StringVar(value="-")
+        self.cleanup_average_rate_var = StringVar(value="-")
+        self.cleanup_estimated_finish_var = StringVar(value="-")
+        self.cleanup_language_progress_var = StringVar(
+            value="Languages: 0/0 completed · 0 remaining"
+        )
+
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -682,15 +727,18 @@ class TranslatorGuiApp:
         self.settings_scroll = ScrollableFrame(notebook)
         self.operation_scroll = ScrollableFrame(notebook)
         self.resources_scroll = ScrollableFrame(notebook)
+        self.cleanup_scroll = ScrollableFrame(notebook)
         self.readme_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
         self.settings_tab = self.settings_scroll.content
         self.operation_tab = self.operation_scroll.content
         self.resources_tab = self.resources_scroll.content
+        self.cleanup_tab = self.cleanup_scroll.content
         self.logs_tab = ttk.Frame(notebook, padding=14, style="App.TFrame")
 
         notebook.add(self.settings_scroll, text="Connection")
         notebook.add(self.operation_scroll, text="Operation")
         notebook.add(self.resources_scroll, text="Resources")
+        notebook.add(self.cleanup_scroll, text="Cleanup")
         notebook.add(self.logs_tab, text="Logs")
         notebook.add(self.readme_tab, text="ReadMe")
 
@@ -698,6 +746,7 @@ class TranslatorGuiApp:
         self._build_operation_tab()
         self._build_resources_tab()
         self._build_logs_tab()
+        self._build_cleanup_tab()
         self._build_readme_tab()
 
         footer = ttk.Frame(shell, style="App.TFrame")
@@ -1388,6 +1437,180 @@ class TranslatorGuiApp:
             column=0,
         )
 
+    def _build_cleanup_tab(self) -> None:
+        self.cleanup_tab.columnconfigure(0, weight=1)
+        self.cleanup_tab.rowconfigure(2, weight=1)
+
+        inputs = ttk.LabelFrame(
+            self.cleanup_tab,
+            text="Cleanup Options",
+            padding=12,
+            style="Card.TLabelframe",
+        )
+        inputs.grid(row=0, column=0, sticky="ew")
+        inputs.columnconfigure(1, weight=1)
+        inputs.columnconfigure(3, weight=1)
+
+        ttk.Label(inputs, text="Languages", style="Field.TLabel").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=4
+        )
+        self.cleanup_language_selector = MultiLanguageDropdown(
+            inputs,
+            languages=LANGUAGES,
+            selected_ids=self.cleanup_language_ids,
+            command=self._cleanup_languages_changed,
+        )
+        self.cleanup_language_selector.grid(
+            row=0, column=1, columnspan=3, sticky="ew", pady=4
+        )
+        add_entry(inputs, 1, "Schema filter", self.cleanup_schema_var, 0)
+        add_entry(inputs, 1, "Only table", self.cleanup_table_var, 2)
+        ttk.Checkbutton(
+            inputs,
+            text="Dry-run: count matching rows, do not delete",
+            variable=self.cleanup_dry_run_var,
+        ).grid(row=2, column=0, columnspan=4, sticky="w", pady=4)
+        ttk.Label(
+            inputs,
+            text=(
+                "A row matches only when every textual content column is NULL, "
+                "empty, or whitespace. Language and key columns are ignored."
+            ),
+            style="Field.TLabel",
+            wraplength=940,
+        ).grid(row=3, column=0, columnspan=4, sticky="w", pady=(5, 0))
+
+        buttons = ttk.Frame(self.cleanup_tab, style="App.TFrame")
+        buttons.grid(row=1, column=0, sticky="ew", pady=(12, 12))
+        buttons.columnconfigure(4, weight=1)
+        self.cleanup_table_button = ttk.Button(
+            buttons,
+            text="Clean Selected Table",
+            command=self.start_cleanup_single_table,
+            style="Accent.TButton",
+        )
+        self.cleanup_table_button.grid(row=0, column=0, padx=(0, 8))
+        self.cleanup_all_button = ttk.Button(
+            buttons,
+            text="Clean All Tables",
+            command=self.start_cleanup_all_tables,
+        )
+        self.cleanup_all_button.grid(row=0, column=1, padx=(0, 8))
+        self.cleanup_pause_button = ttk.Button(
+            buttons,
+            text="Pause",
+            command=self.toggle_pause,
+            state="disabled",
+            style="Pause.TButton",
+        )
+        self.cleanup_pause_button.grid(row=0, column=2, padx=(0, 8))
+        self.cleanup_stop_button = ttk.Button(
+            buttons,
+            text="Stop",
+            command=self.stop_operation,
+            state="disabled",
+            style="Danger.TButton",
+        )
+        self.cleanup_stop_button.grid(row=0, column=3)
+
+        progress = ttk.LabelFrame(
+            self.cleanup_tab,
+            text="Progress",
+            padding=12,
+            style="Card.TLabelframe",
+        )
+        progress.grid(row=2, column=0, sticky="nsew")
+        progress.columnconfigure(1, weight=1)
+        progress.columnconfigure(3, weight=1)
+
+        ttk.Label(progress, text="Status", style="Field.TLabel").grid(
+            row=0, column=0, sticky="w", pady=4
+        )
+        ttk.Label(
+            progress, textvariable=self.cleanup_status_var, style="Field.TLabel"
+        ).grid(row=0, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(progress, text="Log file", style="Field.TLabel").grid(
+            row=1, column=0, sticky="w", pady=4
+        )
+        ttk.Label(
+            progress, textvariable=self.cleanup_log_file_var, style="Field.TLabel"
+        ).grid(row=1, column=1, columnspan=3, sticky="ew", pady=4)
+        ttk.Label(progress, text="Current table", style="Field.TLabel").grid(
+            row=2, column=0, sticky="w", pady=4
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.cleanup_current_table_var,
+            style="Field.TLabel",
+        ).grid(row=2, column=1, columnspan=3, sticky="ew", pady=4)
+
+        self.cleanup_overall_progress = ttk.Progressbar(progress, maximum=100)
+        self.cleanup_overall_progress.grid(
+            row=3, column=0, columnspan=4, sticky="ew", pady=8
+        )
+        ttk.Label(progress, text="Overall", style="Field.TLabel").grid(
+            row=4, column=0, sticky="w"
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.cleanup_overall_percent_var,
+            style="Field.TLabel",
+        ).grid(row=4, column=1, sticky="w")
+        self.cleanup_table_progress = ttk.Progressbar(progress, maximum=100)
+        self.cleanup_table_progress.grid(
+            row=5, column=0, columnspan=4, sticky="ew", pady=8
+        )
+        ttk.Label(progress, text="Table", style="Field.TLabel").grid(
+            row=6, column=0, sticky="w"
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.cleanup_table_percent_var,
+            style="Field.TLabel",
+        ).grid(row=6, column=1, sticky="w")
+        self.cleanup_language_progress = ttk.Progressbar(progress, maximum=100)
+        self.cleanup_language_progress.grid(
+            row=7, column=0, columnspan=4, sticky="ew", pady=8
+        )
+        ttk.Label(progress, text="Language queue", style="Field.TLabel").grid(
+            row=8, column=0, sticky="w"
+        )
+        ttk.Label(
+            progress,
+            textvariable=self.cleanup_language_progress_var,
+            style="Field.TLabel",
+        ).grid(row=8, column=1, columnspan=3, sticky="w")
+
+        metrics = ttk.Frame(progress, style="Card.TFrame")
+        metrics.grid(row=9, column=0, columnspan=4, sticky="ew", pady=(16, 0))
+        for column_index in range(4):
+            metrics.columnconfigure(column_index, weight=1)
+        self._add_metric(
+            metrics, 0, 0, "Discovered tables", self.cleanup_discovered_tables_var
+        )
+        self._add_metric(
+            metrics, 0, 1, "Eligible tables", self.cleanup_eligible_tables_var
+        )
+        self._add_metric(
+            metrics, 0, 2, "Skipped tables", self.cleanup_skipped_tables_var
+        )
+        self._add_metric(metrics, 0, 3, "Matched rows", self.cleanup_matched_rows_var)
+        self._add_metric(
+            metrics, 1, 0, "Processed rows", self.cleanup_processed_rows_var
+        )
+        self._add_metric(
+            metrics, 1, 1, "Remaining rows", self.cleanup_remaining_rows_var
+        )
+        self._add_metric(metrics, 1, 2, "Deleted rows", self.cleanup_deleted_rows_var)
+        self._add_metric(metrics, 1, 3, "Failed rows", self.cleanup_failed_rows_var)
+        self._add_metric(metrics, 2, 0, "Started", self.cleanup_started_var)
+        self._add_metric(metrics, 2, 1, "Finished", self.cleanup_finished_var)
+        self._add_metric(metrics, 2, 2, "Duration", self.cleanup_duration_var)
+        self._add_metric(metrics, 2, 3, "Avg rec/sec", self.cleanup_average_rate_var)
+        self._add_metric(
+            metrics, 3, 0, "Estimated finish", self.cleanup_estimated_finish_var
+        )
+
     def _build_readme_tab(self) -> None:
         self.readme_tab.columnconfigure(0, weight=1)
         self.readme_tab.rowconfigure(0, weight=1)
@@ -1611,6 +1834,8 @@ class TranslatorGuiApp:
         translator_config: RuntimeConfig,
     ) -> None:
         log_file: Path | None = None
+        logger: logging.Logger | None = None
+        service_started = False
 
         try:
             queue_handler = QueueLogHandler(self.events)
@@ -1634,9 +1859,19 @@ class TranslatorGuiApp:
                 cancel_callback=self.cancel_event.is_set,
                 pause_callback=self.pause_event.is_set,
             )
+            service_started = True
             summary = service.run(resx_config)
             self.events.put(("job-done", (job_name, summary, str(log_file))))
         except Exception as exc:
+            if logger is not None and not service_started:
+                logger.exception("RESX job failed before processing started: %s", exc)
+                logger.info(
+                    "\n%s",
+                    format_unfinished_report(
+                        [f"operation | status=failed | reason={exc}"],
+                        operation_name="RESX translation",
+                    ),
+                )
             self.events.put(
                 (
                     "job-error",
@@ -1648,6 +1883,148 @@ class TranslatorGuiApp:
                     ),
                 )
             )
+
+    def start_cleanup_single_table(self) -> None:
+        table_name = self.cleanup_table_var.get().strip()
+        if not table_name:
+            self._show_error("Cleanup Table", "Enter a table name in Only table.")
+            return
+        try:
+            schema_name, parsed_table_name = split_table_reference(
+                table_name,
+                self.cleanup_schema_var.get(),
+            )
+            config = self._build_cleanup_config(
+                schema_name=schema_name,
+                table_name=parsed_table_name,
+            )
+        except Exception as exc:
+            self._show_error("Cleanup Settings Error", str(exc))
+            return
+        self._start_cleanup_job("cleanup-single-table", config)
+
+    def start_cleanup_all_tables(self) -> None:
+        if self._is_worker_running():
+            self._show_warning("Already Running", "Another operation is already running.")
+            return
+        try:
+            config = self._build_cleanup_config(
+                schema_name=self.cleanup_schema_var.get(),
+                table_name=None,
+            )
+        except Exception as exc:
+            self._show_error("Cleanup Settings Error", str(exc))
+            return
+
+        self._last_cleanup_table_selection_eligible = ()
+        selected_tables = self._choose_tables_for_all(config, cleanup=True)
+        if selected_tables is None:
+            return
+        all_eligible_names = getattr(
+            self,
+            "_last_cleanup_table_selection_eligible",
+            (),
+        )
+        config = replace(
+            config,
+            excluded_table_names=tuple(
+                name for name in all_eligible_names if name not in selected_tables
+            ),
+        )
+        self._start_cleanup_job("cleanup-all-tables", config)
+
+    def _start_cleanup_job(self, job_name: str, config: CleanupConfig) -> None:
+        if self._is_worker_running():
+            self._show_warning("Already Running", "Another operation is already running.")
+            return
+        if not config.dry_run:
+            language_codes = ", ".join(language.code for language in config.languages)
+            confirmed = self._ask_yes_no(
+                "Confirm Cleanup Delete",
+                "Dry-run is off. Empty localization rows will be permanently "
+                f"deleted for these languages: {language_codes}. Continue?",
+            )
+            if not confirmed:
+                return
+
+        self.running_job_name = job_name
+        self.cancel_event.clear()
+        self.pause_event.clear()
+        self._reset_cleanup_progress()
+        self._start_cleanup_timing()
+        self._set_running(True)
+        self._append_log(f"Job started: {job_name}")
+        self.worker_thread = threading.Thread(
+            target=self._cleanup_worker,
+            args=(job_name, config),
+            daemon=True,
+        )
+        self.worker_thread.start()
+
+    def _cleanup_worker(self, job_name: str, config: CleanupConfig) -> None:
+        read_connection = None
+        write_connection = None
+        log_file: Path | None = None
+        logger: logging.Logger | None = None
+        service_started = False
+        try:
+            queue_handler = QueueLogHandler(self.events)
+            logger, log_file = configure_logging(
+                config.log_dir,
+                extra_handlers=(queue_handler,),
+            )
+            self.events.put(("log-file", str(log_file)))
+            read_connection = connect(config.connection_string, autocommit=False)
+            write_connection = (
+                connect(config.connection_string, autocommit=True)
+                if not config.dry_run
+                else read_connection
+            )
+            service = DatabaseCleanupService(
+                schema_reader=SqlServerSchemaReader(read_connection),
+                repository=SqlServerLocalizationRepository(
+                    read_connection,
+                    write_connection,
+                ),
+                logger=logger,
+                progress_callback=lambda snapshot: self.events.put(
+                    ("cleanup-progress", snapshot)
+                ),
+                cancel_callback=self.cancel_event.is_set,
+                pause_callback=self.pause_event.is_set,
+            )
+            service_started = True
+            summary = service.run(config)
+            self.events.put(("job-done", (job_name, summary, str(log_file))))
+        except Exception as exc:
+            if logger is not None and not service_started:
+                logger.exception("Cleanup job failed before processing started: %s", exc)
+                logger.info(
+                    "\n%s",
+                    format_unfinished_report(
+                        [f"operation | status=failed | reason={exc}"],
+                        operation_name="Database cleanup",
+                    ),
+                )
+            self.events.put(
+                (
+                    "job-error",
+                    (
+                        job_name,
+                        str(exc),
+                        traceback.format_exc(),
+                        str(log_file) if log_file else "-",
+                    ),
+                )
+            )
+        finally:
+            try:
+                if write_connection is not None and write_connection is not read_connection:
+                    write_connection.close()
+                if read_connection is not None:
+                    read_connection.close()
+            except Exception:
+                pass
 
     def start_test_then_prompt(self) -> None:
         test_table = self.test_table_var.get().strip()
@@ -1728,7 +2105,12 @@ class TranslatorGuiApp:
         self.followup_config = None
         self._start_job("all-tables", config)
 
-    def _choose_tables_for_all(self, config: RuntimeConfig) -> tuple[str, ...] | None:
+    def _choose_tables_for_all(
+        self,
+        config: RuntimeConfig | CleanupConfig,
+        *,
+        cleanup: bool = False,
+    ) -> tuple[str, ...] | None:
         """Show the sorted table review dialog and return checked tables.
 
         Table metadata and character estimates are loaded in a worker thread so
@@ -1737,7 +2119,7 @@ class TranslatorGuiApp:
         """
 
         dialog = Toplevel(self.root)
-        dialog.title("Select Tables to Run")
+        dialog.title("Select Tables to Clean" if cleanup else "Select Tables to Run")
         dialog.configure(background=BG_COLOR)
         dialog.geometry("780x600")
         dialog.minsize(620, 420)
@@ -1750,13 +2132,15 @@ class TranslatorGuiApp:
         heading.columnconfigure(0, weight=1)
         ttk.Label(
             heading,
-            text="Select tables to translate",
+            text="Select tables to clean" if cleanup else "Select tables to translate",
             style="Header.TLabel",
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             heading,
             text=(
-                "Tables are ordered from the smallest pending text to the largest. "
+                "Tables are ordered by matching empty rows. Checked tables will be cleaned."
+                if cleanup
+                else "Tables are ordered from the smallest pending text to the largest. "
                 "Checked tables will be translated."
             ),
             style="SubHeader.TLabel",
@@ -1877,7 +2261,7 @@ class TranslatorGuiApp:
         )
         continue_button = ttk.Button(
             button_frame,
-            text="Run selected",
+            text="Clean selected" if cleanup else "Run selected",
             command=continue_with_selection,
             state="disabled",
             style="Accent.TButton",
@@ -1897,7 +2281,9 @@ class TranslatorGuiApp:
                 if item.eligible:
                     selection_vars[item.display_name] = variable
                 suffix = (
-                    f"{item.text_characters:,} characters · "
+                    f"{item.pending_rows:,} empty rows"
+                    if cleanup
+                    else f"{item.text_characters:,} characters · "
                     f"{item.pending_rows:,} pending rows"
                 )
                 if not item.eligible:
@@ -1911,9 +2297,14 @@ class TranslatorGuiApp:
                 checkbutton.grid(row=index, column=0, sticky="ew", pady=2)
             table_rows.columnconfigure(0, weight=1)
             loaded[0] = True
+            selected_action = (
+                "checked tables will be cleaned"
+                if cleanup
+                else "checked tables will run"
+            )
             status_var.set(
                 f"{len(items)} tables found · {len(eligible_names)} eligible · "
-                "checked tables will run"
+                f"{selected_action}"
             )
             select_all_button.configure(state="normal" if eligible_names else "disabled")
             clear_all_button.configure(state="normal" if eligible_names else "disabled")
@@ -1928,7 +2319,10 @@ class TranslatorGuiApp:
 
         def load_worker() -> None:
             try:
-                items = self._load_table_selection_items(config)
+                if cleanup:
+                    items = self._load_cleanup_table_selection_items(config)
+                else:
+                    items = self._load_table_selection_items(config)
             except Exception as exc:
                 try:
                     self.root.after(0, lambda exc=exc: show_loading_error(exc))
@@ -1958,8 +2352,78 @@ class TranslatorGuiApp:
         dialog.focus_set()
         threading.Thread(target=load_worker, daemon=True).start()
         self.root.wait_window(dialog)
-        self._last_table_selection_eligible = eligible_names
+        if cleanup:
+            self._last_cleanup_table_selection_eligible = eligible_names
+        else:
+            self._last_table_selection_eligible = eligible_names
         return result[0]
+
+    def _load_cleanup_table_selection_items(
+        self,
+        config: CleanupConfig,
+    ) -> tuple[TableSelectionItem, ...]:
+        connection = connect(config.connection_string, autocommit=False)
+        try:
+            tables = SqlServerSchemaReader(connection).get_localize_tables(
+                schema_name=config.schema_name,
+                table_name=config.table_name,
+            )
+            repository = SqlServerLocalizationRepository(connection)
+            items: list[TableSelectionItem] = []
+            for table in tables:
+                if not table.language_column_name:
+                    items.append(
+                        TableSelectionItem(
+                            display_name=table.display_name,
+                            eligible=False,
+                            reason="LanguageId/LangId column was not found",
+                        )
+                    )
+                    continue
+                if not table.cleanup_text_columns():
+                    items.append(
+                        TableSelectionItem(
+                            display_name=table.display_name,
+                            eligible=False,
+                            reason="no textual content column was found",
+                        )
+                    )
+                    continue
+                matched_rows = 0
+                for language in config.languages:
+                    matched_rows += int(
+                        run_with_retry(
+                            lambda table=table, language=language: repository.count_empty_localized_rows(
+                                table,
+                                language_id=language.id,
+                            ),
+                            operation_name=(
+                                f"count empty rows in {table.display_name} ({language.code})"
+                            ),
+                            attempts=config.retry.attempts,
+                            initial_delay_seconds=config.retry.initial_delay_seconds,
+                            backoff_factor=config.retry.backoff_factor,
+                            logger=logging.getLogger("database_translator"),
+                        )
+                    )
+                items.append(
+                    TableSelectionItem(
+                        display_name=table.display_name,
+                        pending_rows=max(matched_rows, 0),
+                    )
+                )
+        finally:
+            connection.close()
+        return tuple(
+            sorted(
+                items,
+                key=lambda item: (
+                    not item.eligible,
+                    item.pending_rows,
+                    item.display_name.casefold(),
+                ),
+            )
+        )
 
     def _load_table_selection_items(
         self,
@@ -2087,6 +2551,8 @@ class TranslatorGuiApp:
         read_connection = None
         write_connection = None
         log_file: Path | None = None
+        logger: logging.Logger | None = None
+        service_started = False
 
         try:
             queue_handler = QueueLogHandler(self.events)
@@ -2117,9 +2583,22 @@ class TranslatorGuiApp:
                 cancel_callback=self.cancel_event.is_set,
                 pause_callback=self.pause_event.is_set,
             )
+            service_started = True
             summary = service.run(config)
             self.events.put(("job-done", (job_name, summary, str(log_file))))
         except Exception as exc:
+            if logger is not None and not service_started:
+                logger.exception(
+                    "Database translation failed before processing started: %s",
+                    exc,
+                )
+                logger.info(
+                    "\n%s",
+                    format_unfinished_report(
+                        [f"operation | status=failed | reason={exc}"],
+                        operation_name="Database translation",
+                    ),
+                )
             self.events.put(
                 (
                     "job-error",
@@ -2148,14 +2627,16 @@ class TranslatorGuiApp:
         for button_name in (
             "pause_button",
             "resx_pause_button",
+            "cleanup_pause_button",
             "stop_button",
             "resx_stop_button",
+            "cleanup_stop_button",
         ):
             button = getattr(self, button_name, None)
             if button is not None:
                 button.configure(state="disabled")
         self._append_log(
-            "Stop requested. The current row or resource key will finish before "
+            "Stop requested. The current row, cleanup batch, or resource key will finish before "
             "the job stops."
         )
 
@@ -2176,25 +2657,27 @@ class TranslatorGuiApp:
         self._set_pause_controls(paused=True)
         self._set_active_job_status("Pause requested...")
         self._append_log(
-            "Pause requested. The current row or resource key will finish, then "
+            "Pause requested. The current row, cleanup batch, or resource key will finish, then "
             "the job will wait for Resume."
         )
 
     def _set_active_job_status(self, status: str) -> None:
         if self.running_job_name.startswith("resx-"):
             self.resx_status_var.set(status)
+        elif self.running_job_name.startswith("cleanup-"):
+            self.cleanup_status_var.set(status)
         else:
             self.status_var.set(status)
 
     def _pause_timing(self) -> None:
-        prefix = "resx" if self.running_job_name.startswith("resx-") else "operation"
+        prefix = self._active_timing_prefix()
         paused_name = f"{prefix}_paused_started_monotonic"
         started_name = f"{prefix}_started_monotonic"
         if getattr(self, started_name, None) is not None and getattr(self, paused_name, None) is None:
             setattr(self, paused_name, time.monotonic())
 
     def _resume_timing(self) -> None:
-        prefix = "resx" if self.running_job_name.startswith("resx-") else "operation"
+        prefix = self._active_timing_prefix()
         paused_name = f"{prefix}_paused_started_monotonic"
         total_name = f"{prefix}_paused_total_seconds"
         paused_started = getattr(self, paused_name, None)
@@ -2218,10 +2701,21 @@ class TranslatorGuiApp:
     def _set_pause_controls(self, *, paused: bool) -> None:
         text = "Resume" if paused else "Pause"
         style = "Resume.TButton" if paused else "Pause.TButton"
-        for button_name in ("pause_button", "resx_pause_button"):
+        for button_name in (
+            "pause_button",
+            "resx_pause_button",
+            "cleanup_pause_button",
+        ):
             button = getattr(self, button_name, None)
             if button is not None:
                 button.configure(text=text, style=style)
+
+    def _active_timing_prefix(self) -> str:
+        if self.running_job_name.startswith("resx-"):
+            return "resx"
+        if self.running_job_name.startswith("cleanup-"):
+            return "cleanup"
+        return "operation"
 
     def _target_languages_changed(self) -> None:
         selected = self.target_language_selector.selected_ids()
@@ -2232,6 +2726,11 @@ class TranslatorGuiApp:
         selected = self.resx_target_language_selector.selected_ids()
         if selected:
             self.resx_target_language_var.set(language_label(selected[0]))
+
+    def _cleanup_languages_changed(self) -> None:
+        selected = self.cleanup_language_selector.selected_ids()
+        if selected:
+            self.cleanup_language_var.set(language_label(selected[0]))
 
     def _selected_target_ids(self, selector_name: str, variable: StringVar) -> tuple[int, ...]:
         selector = getattr(self, selector_name, None)
@@ -2295,6 +2794,39 @@ class TranslatorGuiApp:
                 ),
             ),
             target_languages=target_languages,
+        )
+
+    def _build_cleanup_config(
+        self,
+        *,
+        schema_name: str | None,
+        table_name: str | None,
+    ) -> CleanupConfig:
+        language_ids = self._selected_target_ids(
+            "cleanup_language_selector",
+            self.cleanup_language_var,
+        )
+        if not language_ids:
+            raise ValueError("Select at least one cleanup language.")
+        return CleanupConfig(
+            connection_string=self._build_connection_settings().build_connection_string(),
+            languages=tuple(get_language(language_id) for language_id in language_ids),
+            dry_run=self.cleanup_dry_run_var.get(),
+            schema_name=normalize_sql_name(schema_name),
+            table_name=normalize_sql_name(table_name),
+            batch_size=max(parse_int(self.batch_size_var.get(), "Batch size"), 1),
+            log_dir=Path(self.log_dir_var.get().strip() or "logs"),
+            retry=RetrySettings(
+                attempts=max(parse_int(self.retries_var.get(), "Retries"), 1),
+                initial_delay_seconds=max(
+                    parse_float(self.retry_delay_var.get(), "Retry delay"),
+                    0,
+                ),
+                backoff_factor=max(
+                    parse_float(self.retry_backoff_var.get(), "Retry backoff"),
+                    1,
+                ),
+            ),
         )
 
     def _build_resx_runtime_config(
@@ -2473,6 +3005,13 @@ class TranslatorGuiApp:
                     "target_language_selector", self.target_language_var
                 )[0]
             ),
+            "CLEANUP_LANGUAGE_IDS": ",".join(
+                str(language_id)
+                for language_id in self._selected_target_ids(
+                    "cleanup_language_selector", self.cleanup_language_var
+                )
+            ),
+            "CLEANUP_DRY_RUN": bool_to_env(self.cleanup_dry_run_var.get()),
             "RESX_RESOURCE_DIR": self.resx_resource_dir_var.get().strip(),
             "RESX_SOURCE_LANGUAGE_ID": str(
                 language_id_from_label(self.resx_source_language_var.get())
@@ -2506,19 +3045,31 @@ class TranslatorGuiApp:
                 self._apply_progress(payload)
             elif event_type == "resx-progress":
                 self._apply_resx_progress(payload)
+            elif event_type == "cleanup-progress":
+                self._apply_cleanup_progress(payload)
             elif event_type == "log-file":
                 self.log_file_var.set(str(payload))
                 self.resx_log_file_var.set(str(payload))
+                self.cleanup_log_file_var.set(str(payload))
             elif event_type == "job-done":
                 job_name, summary, log_file = payload
                 if str(job_name).startswith("resx-"):
                     self._handle_resx_job_done(str(job_name), summary, str(log_file))
+                elif str(job_name).startswith("cleanup-"):
+                    self._handle_cleanup_job_done(str(job_name), summary, str(log_file))
                 else:
                     self._handle_job_done(str(job_name), summary, str(log_file))
             elif event_type == "job-error":
                 job_name, message, details, log_file = payload
                 if str(job_name).startswith("resx-"):
                     self._handle_resx_job_error(
+                        str(job_name),
+                        str(message),
+                        str(details),
+                        str(log_file),
+                    )
+                elif str(job_name).startswith("cleanup-"):
+                    self._handle_cleanup_job_error(
                         str(job_name),
                         str(message),
                         str(details),
@@ -2621,6 +3172,39 @@ class TranslatorGuiApp:
         self.resx_last_remaining_entries = snapshot.remaining_entries
         self._refresh_resx_throughput()
 
+    def _apply_cleanup_progress(self, snapshot: object) -> None:
+        if not isinstance(snapshot, CleanupProgressSnapshot):
+            return
+        if self.cancel_event.is_set():
+            self.cleanup_status_var.set("Stop requested...")
+        elif self.pause_event.is_set():
+            self.cleanup_status_var.set("Paused")
+        else:
+            self.cleanup_status_var.set(phase_label(snapshot.phase))
+        self.cleanup_current_table_var.set(snapshot.current_table or "-")
+        self.cleanup_overall_progress["value"] = snapshot.percent
+        self.cleanup_table_progress["value"] = snapshot.table_percent
+        self.cleanup_language_progress["value"] = queue_progress_percent(snapshot)
+        self.cleanup_overall_percent_var.set(f"{snapshot.percent:.2f}%")
+        self.cleanup_table_percent_var.set(f"{snapshot.table_percent:.2f}%")
+        self.cleanup_language_progress_var.set(
+            f"Language {snapshot.target_language_index}/{snapshot.total_target_languages}: "
+            f"{snapshot.current_target_language or '-'} · "
+            f"Completed: {format_language_code_list(snapshot.completed_target_language_codes)} · "
+            f"Remaining: {format_language_code_list(snapshot.remaining_target_language_codes)}"
+        )
+        self.cleanup_discovered_tables_var.set(str(snapshot.discovered_tables))
+        self.cleanup_eligible_tables_var.set(str(snapshot.eligible_tables))
+        self.cleanup_skipped_tables_var.set(str(snapshot.skipped_tables))
+        self.cleanup_matched_rows_var.set(str(snapshot.matched_rows))
+        self.cleanup_processed_rows_var.set(str(snapshot.processed_rows))
+        self.cleanup_remaining_rows_var.set(str(snapshot.remaining_rows))
+        self.cleanup_deleted_rows_var.set(str(snapshot.deleted_rows))
+        self.cleanup_failed_rows_var.set(str(snapshot.failed_rows))
+        self.cleanup_last_processed_rows = snapshot.processed_rows
+        self.cleanup_last_remaining_rows = snapshot.remaining_rows
+        self._refresh_cleanup_throughput()
+
     def _handle_resx_job_done(
         self,
         job_name: str,
@@ -2652,6 +3236,30 @@ class TranslatorGuiApp:
             f"Failed: {failed}\n"
             f"Created files: {created}\n"
             f"Updated files: {updated}",
+        )
+
+    def _handle_cleanup_job_done(
+        self,
+        job_name: str,
+        summary: object,
+        log_file: str,
+    ) -> None:
+        stopped = self.cancel_event.is_set()
+        self._set_running(False)
+        self._finish_cleanup_timing()
+        self.cleanup_status_var.set("Stopped" if stopped else "Finished")
+        self.cleanup_log_file_var.set(log_file)
+        if stopped:
+            self._append_log(f"Job stopped: {job_name}")
+            return
+        self._append_log(f"Job finished: {job_name}")
+        self._show_info(
+            "Cleanup Finished",
+            "Cleanup operation finished.\n"
+            f"Matched: {getattr(summary, 'matched_rows', 0)}\n"
+            f"Deleted: {getattr(summary, 'deleted_rows', 0)}\n"
+            f"Failed: {getattr(summary, 'failed_rows', 0)}\n"
+            f"Skipped tables: {getattr(summary, 'skipped_tables', 0)}",
         )
 
     def _handle_job_done(
@@ -2723,6 +3331,21 @@ class TranslatorGuiApp:
         self._append_log(details)
         self._show_error("RESX Job Error", message)
 
+    def _handle_cleanup_job_error(
+        self,
+        job_name: str,
+        message: str,
+        details: str,
+        log_file: str,
+    ) -> None:
+        self._set_running(False)
+        self._finish_cleanup_timing()
+        self.cleanup_status_var.set("Error")
+        self.cleanup_log_file_var.set(log_file)
+        self._append_log(f"Job failed: {job_name}: {message}")
+        self._append_log(details)
+        self._show_error("Cleanup Job Error", message)
+
     def _reset_progress(self) -> None:
         self.status_var.set("Starting...")
         self.current_table_var.set("-")
@@ -2787,6 +3410,36 @@ class TranslatorGuiApp:
         self.resx_last_processed_entries = 0
         self.resx_last_remaining_entries = 0
 
+    def _reset_cleanup_progress(self) -> None:
+        self.cleanup_status_var.set("Starting...")
+        self.cleanup_current_table_var.set("-")
+        self.cleanup_overall_progress["value"] = 0
+        self.cleanup_table_progress["value"] = 0
+        self.cleanup_language_progress["value"] = 0
+        self.cleanup_language_progress_var.set(
+            "Languages: 0/0 completed · 0 remaining"
+        )
+        self.cleanup_overall_percent_var.set("0.00%")
+        self.cleanup_table_percent_var.set("0.00%")
+        self.cleanup_discovered_tables_var.set("0")
+        self.cleanup_eligible_tables_var.set("0")
+        self.cleanup_skipped_tables_var.set("0")
+        self.cleanup_matched_rows_var.set("0")
+        self.cleanup_processed_rows_var.set("0")
+        self.cleanup_remaining_rows_var.set("0")
+        self.cleanup_deleted_rows_var.set("0")
+        self.cleanup_failed_rows_var.set("0")
+        self.cleanup_started_var.set("-")
+        self.cleanup_finished_var.set("-")
+        self.cleanup_duration_var.set("-")
+        self.cleanup_average_rate_var.set("-")
+        self.cleanup_estimated_finish_var.set("-")
+        self.cleanup_started_monotonic = None
+        self.cleanup_paused_started_monotonic = None
+        self.cleanup_paused_total_seconds = 0.0
+        self.cleanup_last_processed_rows = 0
+        self.cleanup_last_remaining_rows = 0
+
     def _start_operation_timing(self) -> None:
         self.operation_started_monotonic = time.monotonic()
         self.operation_started_var.set(format_timestamp(datetime.now()))
@@ -2829,6 +3482,27 @@ class TranslatorGuiApp:
         self.resx_paused_started_monotonic = None
         self.resx_paused_total_seconds = 0.0
 
+    def _start_cleanup_timing(self) -> None:
+        self.cleanup_started_monotonic = time.monotonic()
+        self.cleanup_started_var.set(format_timestamp(datetime.now()))
+        self.cleanup_finished_var.set("-")
+        self.cleanup_duration_var.set("00:00:00")
+        self.cleanup_average_rate_var.set("-")
+        self.cleanup_estimated_finish_var.set("-")
+        self.cleanup_paused_started_monotonic = None
+        self.cleanup_paused_total_seconds = 0.0
+
+    def _finish_cleanup_timing(self) -> None:
+        if self.cleanup_started_monotonic is None:
+            return
+        elapsed_seconds = self._active_elapsed_seconds("cleanup") or 0.0
+        self.cleanup_finished_var.set(format_timestamp(datetime.now()))
+        self.cleanup_duration_var.set(format_duration(elapsed_seconds))
+        self._refresh_cleanup_throughput(elapsed_seconds, force=True)
+        self.cleanup_started_monotonic = None
+        self.cleanup_paused_started_monotonic = None
+        self.cleanup_paused_total_seconds = 0.0
+
     def _refresh_running_duration(self) -> None:
         if not self._is_worker_running():
             return
@@ -2838,6 +3512,13 @@ class TranslatorGuiApp:
             if elapsed_seconds is not None:
                 self.resx_duration_var.set(format_duration(elapsed_seconds))
                 self._refresh_resx_throughput(elapsed_seconds)
+            return
+
+        if self.running_job_name.startswith("cleanup-"):
+            elapsed_seconds = self._active_elapsed_seconds("cleanup")
+            if elapsed_seconds is not None:
+                self.cleanup_duration_var.set(format_duration(elapsed_seconds))
+                self._refresh_cleanup_throughput(elapsed_seconds)
             return
 
         elapsed_seconds = self._active_elapsed_seconds("operation")
@@ -2891,6 +3572,29 @@ class TranslatorGuiApp:
             )
         )
 
+    def _refresh_cleanup_throughput(
+        self,
+        elapsed_seconds: float | None = None,
+        *,
+        force: bool = False,
+    ) -> None:
+        if self.pause_event.is_set() and not force:
+            return
+        if elapsed_seconds is None:
+            elapsed_seconds = self._active_elapsed_seconds("cleanup")
+            if elapsed_seconds is None:
+                return
+        self.cleanup_average_rate_var.set(
+            format_average_rate(self.cleanup_last_processed_rows, elapsed_seconds)
+        )
+        self.cleanup_estimated_finish_var.set(
+            format_estimated_finish(
+                self.cleanup_last_processed_rows,
+                self.cleanup_last_remaining_rows,
+                elapsed_seconds,
+            )
+        )
+
     def _set_running(self, running: bool) -> None:
         state = "disabled" if running else "normal"
         for button_name in (
@@ -2899,6 +3603,8 @@ class TranslatorGuiApp:
             "run_all_button",
             "resx_scan_button",
             "resx_run_button",
+            "cleanup_table_button",
+            "cleanup_all_button",
         ):
             button = getattr(self, button_name, None)
             if button is not None:
@@ -2907,19 +3613,22 @@ class TranslatorGuiApp:
         for button_name in (
             "pause_button",
             "resx_pause_button",
+            "cleanup_pause_button",
             "stop_button",
             "resx_stop_button",
+            "cleanup_stop_button",
         ):
             button = getattr(self, button_name, None)
             if button is not None:
                 button.configure(state="disabled")
 
         if running:
-            active_controls = (
-                ("resx_pause_button", "resx_stop_button")
-                if self.running_job_name.startswith("resx-")
-                else ("pause_button", "stop_button")
-            )
+            if self.running_job_name.startswith("resx-"):
+                active_controls = ("resx_pause_button", "resx_stop_button")
+            elif self.running_job_name.startswith("cleanup-"):
+                active_controls = ("cleanup_pause_button", "cleanup_stop_button")
+            else:
+                active_controls = ("pause_button", "stop_button")
             for button_name in active_controls:
                 button = getattr(self, button_name, None)
                 if button is not None:
@@ -3929,6 +4638,7 @@ def phase_label(phase: str) -> str:
         "prepare": "Preparing tables",
         "prepared": "Ready",
         "running": "Running",
+        "table-started": "Starting table",
         "table-finished": "Table finished",
         "table-failed": "Table failed",
         "finished": "Finished",

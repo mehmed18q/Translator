@@ -95,6 +95,28 @@ class LocalizeTable:
             and column.name.casefold() not in excluded
         )
 
+    def cleanup_text_columns(self) -> tuple[ColumnInfo, ...]:
+        """Return textual content columns used to identify empty localizations.
+
+        Cleanup deliberately considers every textual content column, not only
+        the allow-listed columns supported by translation.  Language and
+        entity-key columns are metadata, so they must not keep an otherwise
+        empty localization row alive.
+        """
+
+        excluded = {
+            (self.language_column_name or "").casefold(),
+            *(column_name.casefold() for column_name in self.key_column_names),
+        }
+        return tuple(
+            column
+            for column in self.columns
+            if column.is_text
+            and not column.is_computed
+            and not column.is_primary_key
+            and column.name.casefold() not in excluded
+        )
+
 
 InsertValueMode = Literal[
     "copy_from_source",

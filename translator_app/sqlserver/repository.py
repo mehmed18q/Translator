@@ -112,6 +112,49 @@ class SqlServerLocalizationRepository:
         finally:
             cursor.close()
 
+    def count_empty_localized_rows(
+        self,
+        table: LocalizeTable,
+        *,
+        language_id: int,
+    ) -> int:
+        """Count rows whose textual content columns are all blank."""
+
+        sql = self._empty_localized_rows_sql(table, "COUNT_BIG(1)")
+        cursor = self._cursor(self.read_connection)
+        try:
+            row = cursor.execute(sql, language_id).fetchone()
+            return int(row[0]) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
+
+    def delete_empty_localized_rows(
+        self,
+        table: LocalizeTable,
+        *,
+        language_id: int,
+        batch_size: int,
+    ) -> int:
+        """Delete one bounded batch of empty localization rows."""
+
+        table_name = quote_table(table.schema_name, table.table_name)
+        language_column = quote_identifier(required(table.language_column_name))
+        condition = self._empty_localized_row_condition(table)
+        sql = f"""
+SET NOCOUNT ON;
+DELETE TOP ({max(int(batch_size), 1)})
+FROM {table_name}
+WHERE {language_column} = ?
+    AND {condition};
+SELECT CAST(@@ROWCOUNT AS BIGINT) AS deleted_rows;
+"""
+        cursor = self._cursor(self.write_connection)
+        try:
+            row = cursor.execute(sql, language_id).fetchone()
+            return max(int(row[0]), 0) if row and row[0] is not None else 0
+        finally:
+            cursor.close()
+
     def iter_missing_source_rows(
         self,
         plan: TableTranslationPlan,
@@ -303,6 +346,29 @@ WHERE {entity_key_column} = ? AND {language_column} = ?
             except Exception:
                 pass
         return cursor
+
+    def _empty_localized_rows_sql(
+        self,
+        table: LocalizeTable,
+        select_expression: str,
+    ) -> str:
+        table_name = quote_table(table.schema_name, table.table_name)
+        language_column = quote_identifier(required(table.language_column_name))
+        condition = self._empty_localized_row_condition(table)
+        return f"""
+SELECT {select_expression}
+FROM {table_name}
+WHERE {language_column} = ?
+    AND {condition}
+"""
+
+    def _empty_localized_row_condition(self, table: LocalizeTable) -> str:
+        columns = table.cleanup_text_columns()
+        if not columns:
+            raise ValueError("No textual content column was found.")
+        return "\n    AND ".join(
+            self._missing_text_value_condition(column.name) for column in columns
+        )
 
     def _missing_rows_sql(
         self,

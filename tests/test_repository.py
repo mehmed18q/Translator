@@ -48,11 +48,47 @@ class FakeCursor:
     def fetchall(self) -> list[tuple[object, ...]]:
         return self.rows
 
+    def fetchone(self) -> tuple[object, ...] | None:
+        return self.rows[0] if self.rows else None
+
     def close(self) -> None:
         self.closed = True
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_counts_rows_when_all_textual_content_columns_are_blank(self) -> None:
+        connection = FakeConnection(batches=[[(4,)]])
+        repository = SqlServerLocalizationRepository(connection)
+        table = build_table_with_description_and_internal_memo()
+
+        count = repository.count_empty_localized_rows(table, language_id=2)
+
+        self.assertEqual(count, 4)
+        cursor = connection.cursors[0]
+        self.assertEqual(cursor.params, (2,))
+        self.assertIn("FROM [dbo].[SampleLocalize]", cursor.sql)
+        self.assertIn("[Title] AS NVARCHAR(MAX)", cursor.sql)
+        self.assertIn("[Description] AS NVARCHAR(MAX)", cursor.sql)
+        self.assertIn("[InternalMemo] AS NVARCHAR(MAX)", cursor.sql)
+        self.assertNotIn("CAST([SampleId]", cursor.sql)
+
+    def test_deletes_empty_rows_in_a_bounded_batch_for_one_language(self) -> None:
+        connection = FakeConnection(batches=[[(25,)]])
+        repository = SqlServerLocalizationRepository(connection)
+
+        deleted = repository.delete_empty_localized_rows(
+            build_table_with_description(),
+            language_id=3,
+            batch_size=25,
+        )
+
+        self.assertEqual(deleted, 25)
+        cursor = connection.cursors[0]
+        self.assertIn("DELETE TOP (25)", cursor.sql)
+        self.assertIn("[LanguageId] = ?", cursor.sql)
+        self.assertIn("SELECT CAST(@@ROWCOUNT AS BIGINT)", cursor.sql)
+        self.assertEqual(cursor.params, (3,))
+
     def test_iter_missing_source_rows_reads_batches_by_entity_key(self) -> None:
         connection = FakeConnection(
             batches=[
@@ -261,6 +297,20 @@ def build_table_with_description() -> LocalizeTable:
         language_column_name="LanguageId",
         entity_key_column_name="SampleId",
         referenced_table_name="Sample",
+    )
+
+
+def build_table_with_description_and_internal_memo() -> LocalizeTable:
+    table = build_table_with_description()
+    return LocalizeTable(
+        schema_name=table.schema_name,
+        table_name=table.table_name,
+        object_id=table.object_id,
+        columns=(*table.columns, column("InternalMemo", "nvarchar")),
+        foreign_keys=table.foreign_keys,
+        language_column_name=table.language_column_name,
+        entity_key_column_name=table.entity_key_column_name,
+        referenced_table_name=table.referenced_table_name,
     )
 
 

@@ -28,6 +28,7 @@ from translator_app.service import (
     unfinished_status,
 )
 from translator_app.translators.base import Translator
+from translator_app.unfinished_report import format_unfinished_report
 
 
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -672,16 +673,19 @@ class ResxTranslationService:
         return bool(self.cancel_callback and self.cancel_callback())
 
     def _record_unfinished(self, summary: ResxTranslationSummary, record: str) -> None:
-        summary.unfinished_records.append(single_line(record))
+        normalized = single_line(record)
+        if self._current_target_language and "language=" not in normalized.casefold():
+            normalized += f" | language={self._current_target_language}"
+        summary.unfinished_records.append(normalized)
 
     def _log_unfinished_records(self, summary: ResxTranslationSummary) -> None:
-        self.logger.info("Unfinished records:")
-        self.logger.info("Count: %s", len(summary.unfinished_records))
-        if not summary.unfinished_records:
-            self.logger.info("  none")
-            return
-        for record in summary.unfinished_records:
-            self.logger.info("  - %s", record)
+        self.logger.info(
+            "\n%s",
+            format_unfinished_report(
+                summary.unfinished_records,
+                operation_name="RESX translation",
+            ),
+        )
 
     def _should_stop(self) -> bool:
         return wait_while_paused(

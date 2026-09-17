@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.2.6" src="https://img.shields.io/badge/version-1.2.6-2563eb">
+  <img alt="Version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="72 tests passing" src="https://img.shields.io/badge/tests-72%20passing-2ea44f">
+  <img alt="81 tests passing" src="https://img.shields.io/badge/tests-81%20passing-2ea44f">
 </p>
 
 <p align="center">
-  <strong>Version 1.2.6</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 1.3.0</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -42,13 +42,15 @@ The screenshots below show version 1.2.6 with the main application tabs and work
 
 ## Highlights
 
-- Desktop GUI with `Connection`, `Operation`, `Resources`, `Logs`, and formatted `ReadMe` tabs.
+- Desktop GUI with `Connection`, `Operation`, `Resources`, `Logs`, `Cleanup`, and formatted `ReadMe` tabs.
 - Automatic discovery of tables ending in `Localize` or `Localizes`.
 - Special handling for `dbo.Resource` and `dbo.SystemMessages`.
 - Inserts missing destination-language records.
 - Updates only empty translatable fields in an existing destination record.
 - Never overwrites a populated translation.
 - Dry-run mode is enabled by default for safer review.
+- Cleanup of localization rows whose textual content fields are all null, empty,
+  or whitespace, with table selection, language queues, dry-run, and batched deletes.
 - RESX scanning, creation, and translation with existing values preserved.
 - Separate Pause/Resume and permanent Stop controls for database and RESX jobs.
 - Live progress, retries, translation caching, and detailed logs.
@@ -79,7 +81,7 @@ To use it on another Windows x64 computer:
 3. Open `Translator.exe`.
 4. Enter the SQL Server and LibreTranslate fallback settings in the `Connection` tab.
 5. Use `Test Database` and, when applicable, `Test LibreTranslate`.
-6. Save the settings and start with a dry run from the `Operation` or `Resources` tab.
+6. Save the settings and start with a dry run from the `Operation`, `Resources`, or `Cleanup` tab.
 
 Python, `pip`, Tkinter, `requests`, and `pyodbc` are bundled into the executable. They do not need to be installed separately.
 
@@ -117,18 +119,33 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 | `Operation`  | Select a source and one or more checkbox-based destination languages, filter by schema/table, review and exclude tables before an all-table run, and pause, resume, or stop the active database job. |
 | `Resources`  | Scan or translate `.resx` files into the selected destination language queue, review per-language progress and completed/remaining languages, and pause, resume, or stop the active resource job. |
 | `Logs`       | Follow the current operation in real time and clear the on-screen log view. Clearing the view does not delete the log file. |
+| `Cleanup`    | Select one or more languages and tables, preview empty localization rows in dry-run mode, and delete confirmed matches in bounded batches with live progress and Pause/Stop controls. |
 | `ReadMe`     | Read this documentation inside the application as formatted Markdown. |
 
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 1.2.6 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 1.3.0 | GitHub
 ```
 
 When `Run All Tables` is selected, a modal review lists the tables ordered by
 pending source-text characters (smallest first), with pending row counts. All
 eligible tables are checked initially. Individual tables can be excluded, or
 the `Select all` and `Clear all` controls can be used before choosing `Run selected`.
+
+## Empty localization cleanup
+
+The `Cleanup` tab removes a localization row only when every textual content
+column in that row is empty. `NULL`, an empty string, and a string containing
+only whitespace are treated as empty. Language columns, entity keys, primary
+keys, and computed columns are excluded from this test, so metadata such as a
+`Resource.Key` does not prevent an otherwise empty row from being found.
+
+Cleanup can target one table or a reviewed selection of all discovered tables.
+The selected language checkboxes form a sequential queue, and the table review
+shows the matching row count across that queue. Dry-run is enabled by default
+and performs no delete. With dry-run disabled, a confirmation is required and
+matching rows are deleted in batches using the configured batch size.
 
 ## Pause, resume, and stop
 
@@ -209,7 +226,7 @@ Every database or RESX operation creates a UTF-8 log file named:
 logs/translator_YYYYMMDD_HHMMSS.log
 ```
 
-Logs include discovered and eligible tables/files, pending counts, row or key progress, inserted and updated records, skipped existing values, retries, failures, and full exception details. HTML checks are explicitly recorded as `HTML response validated`, `HTML response repaired`, or `HTML direction normalized`, including the table, column and row identifier—or the RESX filename and key—so every automatic repair can be traced. At the end of every operation, the log contains an `Unfinished records` section. It lists each failed, timed-out, stopped, skipped, or otherwise unprocessed table row or RESX key (or an aggregate count when the data source stopped before identifiers could be read). In the GUI, the same operation messages appear live in the `Logs` tab.
+Logs include discovered and eligible tables/files, pending counts, row or key progress, inserted and updated records, skipped existing values, retries, failures, and full exception details. HTML checks are explicitly recorded as `HTML response validated`, `HTML response repaired`, or `HTML direction normalized`, including the table, column and row identifier—or the RESX filename and key—so every automatic repair can be traced. The final entry of every database, RESX, or cleanup log is an `END-OF-RUN UNFINISHED RECORDS REPORT`. It is sorted by table/file, language, and record/key; shows a status summary; and renders each failed, timed-out, stopped, excluded, skipped, or otherwise unprocessed item as a readable multi-line block. When exact identifiers are unavailable, the report shows the affected row or entry count. A successful run ends with an explicit zero-item completion report. In the GUI, the same operation messages appear live in the `Logs` tab.
 
 For the packaged executable, logs are written beside `Translator.exe`. For a source checkout, relative log paths are resolved from the current working directory.
 
@@ -272,6 +289,8 @@ SQLSERVER_TRUST_SERVER_CERTIFICATE=true
 LIBRETRANSLATE_URL=http://127.0.0.1:5000
 LIBRETRANSLATE_API_KEY=
 LOG_DIR=logs
+CLEANUP_LANGUAGE_IDS=2
+CLEANUP_DRY_RUN=true
 ```
 
 ## Command-line examples
@@ -350,14 +369,14 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **74 tests**.
+The current release passes **81 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "1.2.6"
+__version__ = "1.3.0"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

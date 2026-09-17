@@ -23,11 +23,14 @@ from translator_app.sqlserver import (
     connect,
 )
 from translator_app.translators import create_translator
+from translator_app.unfinished_report import format_unfinished_report
 
 
 def main(argv: list[str] | None = None) -> int:
     load_dotenv(application_dir() / ".env")
     args = build_parser().parse_args(argv)
+    logger: logging.Logger | None = None
+    service_started = False
 
     try:
         config = build_runtime_config(args)
@@ -50,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
                 translator=create_translator(config, logger=logger),
                 logger=logger,
             )
+            service_started = True
             run_requested_mode(service, config, args, logger)
         finally:
             if write_connection is not read_connection:
@@ -57,9 +61,27 @@ def main(argv: list[str] | None = None) -> int:
             read_connection.close()
         return 0
     except KeyboardInterrupt:
+        if logger is not None and not service_started:
+            logger.warning("Operation stopped before processing started.")
+            logger.info(
+                "\n%s",
+                format_unfinished_report(
+                    ["operation | status=stopped | reason=keyboard interrupt"],
+                    operation_name="Database translation",
+                ),
+            )
         print("\nOperation stopped by the user.")
         return 130
     except Exception as exc:
+        if logger is not None and not service_started:
+            logger.exception("Execution failed before processing started: %s", exc)
+            logger.info(
+                "\n%s",
+                format_unfinished_report(
+                    [f"operation | status=failed | reason={exc}"],
+                    operation_name="Database translation",
+                ),
+            )
         print(f"Execution error: {exc}", file=sys.stderr)
         return 1
 
@@ -252,6 +274,13 @@ def run_requested_mode(
 
     if not should_continue_after_test(args, test_summary):
         logger.info("Stopped after the test phase. Run all tables again to continue.")
+        logger.info(
+            "\n%s",
+            format_unfinished_report(
+                getattr(test_summary, "unfinished_records", ()),
+                operation_name="Database translation (test phase)",
+            ),
+        )
         return
 
     logger.info("Test phase approved. Starting all Localize/Localizes tables.")

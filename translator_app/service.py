@@ -28,6 +28,7 @@ from translator_app.sqlserver.repository import (
 )
 from translator_app.sqlserver.schema_reader import SqlServerSchemaReader
 from translator_app.translators.base import Translator
+from translator_app.unfinished_report import format_unfinished_report
 
 
 @dataclass
@@ -725,16 +726,19 @@ class DatabaseTranslationService:
         return translated_values
 
     def _record_unfinished(self, summary: TranslationSummary, record: str) -> None:
-        summary.unfinished_records.append(single_line(record))
+        normalized = single_line(record)
+        if self._current_target_language and "language=" not in normalized.casefold():
+            normalized += f" | language={self._current_target_language}"
+        summary.unfinished_records.append(normalized)
 
     def _log_unfinished_records(self, summary: TranslationSummary) -> None:
-        self.logger.info("Unfinished records:")
-        self.logger.info("Count: %s", len(summary.unfinished_records))
-        if not summary.unfinished_records:
-            self.logger.info("  none")
-            return
-        for record in summary.unfinished_records:
-            self.logger.info("  - %s", record)
+        self.logger.info(
+            "\n%s",
+            format_unfinished_report(
+                summary.unfinished_records,
+                operation_name="Database translation",
+            ),
+        )
 
     def _translate_value(
         self,

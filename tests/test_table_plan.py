@@ -224,6 +224,11 @@ class TablePlanTests(unittest.TestCase):
         self.assertEqual(insert_modes["Title"], "translated_text")
         self.assertEqual(insert_modes["InternalMemo"], "copy_from_source")
 
+        self.assertEqual(
+            tuple(column.name for column in table.cleanup_text_columns()),
+            ("Title", "InternalMemo"),
+        )
+
     def test_resource_table_translates_value_by_key(self) -> None:
         table = LocalizeTable(
             schema_name="dbo",
