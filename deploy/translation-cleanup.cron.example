@@ -1,0 +1,3 @@
+# Run at 00:00 every night. Use the server's local timezone.
+# Install with: crontab -e
+0 0 * * * cd /opt/translator && /opt/translator/.venv/bin/python -m translator_app.scheduled_job --env-file /opt/translator/job.env >> /opt/translator/translation-cleanup-cron.log 2>&1

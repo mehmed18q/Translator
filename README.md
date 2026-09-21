@@ -13,7 +13,7 @@
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="81 tests passing" src="https://img.shields.io/badge/tests-81%20passing-2ea44f">
+  <img alt="84 tests passing" src="https://img.shields.io/badge/tests-84%20passing-2ea44f">
 </p>
 
 <p align="center">
@@ -333,6 +333,44 @@ python main.py --cli --provider libretranslate \
 
 Run `python main.py --cli --help` for the complete option list.
 
+## Nightly translation and cleanup job
+
+For a server, the independent non-interactive job can run without opening the
+GUI or answering CLI prompts:
+
+```bash
+python -m translator_app.scheduled_job --env-file /opt/translator/job.env
+```
+
+The job always performs these phases in order:
+
+1. translate the configured source language into the destination language queue;
+2. after the translation phase returns, scan and clean empty rows for the
+   configured cleanup-language queue.
+
+One operating-system file lock covers both phases. If an earlier scheduled run
+is still active, the next invocation waits for it by default. Set
+`JOB_LOCK_TIMEOUT_SECONDS=0` when a cron invocation should exit immediately
+instead (exit code `2`) rather than wait. A crashed process does not leave a
+stale lock because the OS releases the lock automatically.
+
+Copy [`job.env.example`](job.env.example) to a protected location and fill in
+the SQL Server credentials. `SOURCE_LANGUAGE_ID`, `TARGET_LANGUAGE_IDS`,
+`CLEANUP_LANGUAGE_IDS`, `JOB_SCHEMA`, and optional `JOB_TABLE` control the
+operation. Omitting `JOB_TABLE` processes all eligible `Localize`/
+`Localizes` tables. The job executes writes by default; set `JOB_DRY_RUN=true`
+or pass `--dry-run` for a preview.
+
+For a nightly run at local midnight, use the example in
+[`deploy/translation-cleanup.cron.example`](deploy/translation-cleanup.cron.example):
+
+```cron
+0 0 * * * cd /opt/translator && /opt/translator/.venv/bin/python -m translator_app.scheduled_job --env-file /opt/translator/job.env >> /opt/translator/translation-cleanup-cron.log 2>&1
+```
+
+The existing `main.py` GUI and interactive CLI are not changed and continue to
+work independently of this job.
+
 ## Build the Windows executable
 
 From Windows PowerShell in the project root:
@@ -369,7 +407,7 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **81 tests**.
+The current release passes **84 tests**.
 
 ## Versioning
 
