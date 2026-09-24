@@ -14,7 +14,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
 from typing import Iterable
@@ -28,6 +28,13 @@ from translator_app.config import (
     RetrySettings,
     RuntimeConfig,
     SqlServerConnectionSettings,
+)
+from translator_app.database_targets import (
+    GUEREH_DATABASE_TARGET,
+    RUGSTRUST_DATABASE_TARGET,
+    RUGSTRUST_CERTIFICATION_TABLE,
+    RUGSTRUST_DEFAULT_SCHEMA,
+    normalize_database_target,
 )
 from translator_app.languages import LanguageOption, get_language
 from translator_app.logging_config import configure_logging
@@ -63,6 +70,9 @@ class ScheduledJobConfig:
     retry: RetrySettings
     lock_file: Path
     lock_timeout_seconds: float | None = None
+    database_target: str = "auto"
+    rugstrust_connection: SqlServerConnectionSettings | None = None
+    rugstrust_schema_name: str = RUGSTRUST_DEFAULT_SCHEMA
 
 
 @dataclass(frozen=True)
@@ -206,7 +216,10 @@ def run_scheduled_job(
             config.table_name or "all",
             "dry-run" if config.dry_run else "execute",
         )
-        translation_summary = _run_translation(config, logger)
+        target_configs = scheduled_database_configs(config)
+        translation_summary = merge_translation_summaries(
+            [_run_translation(item, logger) for item in target_configs]
+        )
         logger.info(
             "Translation phase finished: processed=%s inserted=%s updated=%s failed=%s",
             translation_summary.processed_rows,
@@ -217,7 +230,9 @@ def run_scheduled_job(
 
         # Open fresh connections after translation.  This makes the phase
         # boundary explicit and guarantees cleanup sees committed writes.
-        cleanup_summary = _run_cleanup(config, logger)
+        cleanup_summary = merge_cleanup_summaries(
+            [_run_cleanup(item, logger) for item in target_configs]
+        )
         logger.info(
             "Cleanup phase finished: matched=%s deleted=%s failed=%s",
             cleanup_summary.matched_rows,
@@ -229,6 +244,70 @@ def run_scheduled_job(
             translation=translation_summary,
             cleanup=cleanup_summary,
         )
+
+
+def scheduled_database_configs(
+    config: ScheduledJobConfig,
+) -> tuple[ScheduledJobConfig, ...]:
+    """Resolve automatic/explicit database selection for one scheduled run."""
+
+    rugstrust_available = config.rugstrust_connection is not None
+    target = normalize_database_target(
+        config.database_target,
+        rugstrust_available=rugstrust_available,
+    )
+    guereh = replace(config, database_target=GUEREH_DATABASE_TARGET)
+    if target == GUEREH_DATABASE_TARGET:
+        return (guereh,)
+    if config.rugstrust_connection is None:
+        raise ValueError(
+            "Configure the RUGSTRUST_SQLSERVER_SERVER and "
+            "RUGSTRUST_SQLSERVER_DATABASE settings for the RugsTrust database."
+        )
+    rugstrust = replace(
+        config,
+        connection=config.rugstrust_connection,
+        schema_name=(config.rugstrust_schema_name or "").strip() or RUGSTRUST_DEFAULT_SCHEMA,
+        table_name=RUGSTRUST_CERTIFICATION_TABLE,
+        database_target=RUGSTRUST_DATABASE_TARGET,
+    )
+    if target == RUGSTRUST_DATABASE_TARGET:
+        return (rugstrust,)
+    return (guereh, rugstrust)
+
+
+def merge_translation_summaries(
+    summaries: list[TranslationSummary],
+) -> TranslationSummary:
+    result = TranslationSummary()
+    for summary in summaries:
+        result.discovered_tables += summary.discovered_tables
+        result.eligible_tables += summary.eligible_tables
+        result.skipped_tables += summary.skipped_tables
+        result.pending_rows += summary.pending_rows
+        result.processed_rows += summary.processed_rows
+        result.inserted_rows += summary.inserted_rows
+        result.updated_rows += summary.updated_rows
+        result.skipped_existing_rows += summary.skipped_existing_rows
+        result.failed_rows += summary.failed_rows
+        result.unfinished_records.extend(summary.unfinished_records)
+    return result
+
+
+def merge_cleanup_summaries(
+    summaries: list[CleanupSummary],
+) -> CleanupSummary:
+    result = CleanupSummary()
+    for summary in summaries:
+        result.discovered_tables += summary.discovered_tables
+        result.eligible_tables += summary.eligible_tables
+        result.skipped_tables += summary.skipped_tables
+        result.matched_rows += summary.matched_rows
+        result.processed_rows += summary.processed_rows
+        result.deleted_rows += summary.deleted_rows
+        result.failed_rows += summary.failed_rows
+        result.unfinished_records.extend(summary.unfinished_records)
+    return result
 
 
 def _run_translation(
@@ -252,6 +331,9 @@ def _run_translation(
         libretranslate_api_key=config.libretranslate_api_key,
         log_dir=config.log_dir,
         retry=config.retry,
+        database_target=config.database_target,
+        rugstrust_connection_settings=config.rugstrust_connection,
+        rugstrust_schema_name=config.rugstrust_schema_name,
     )
     read_connection = connect(runtime_config.connection_string, autocommit=False)
     write_connection: object = read_connection
@@ -320,31 +402,63 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path(os.getenv("JOB_ENV_FILE", ".env")),
         help="Environment file loaded before parsing settings (default: .env).",
     )
-    parser.add_argument("--connection-string", default=os.getenv("SQLSERVER_CONNECTION_STRING"))
     parser.add_argument(
         "--driver",
-        default=os.getenv("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"),
+        default=os.getenv("GUEREH_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"),
     )
-    parser.add_argument("--server", default=os.getenv("SQLSERVER_SERVER"))
-    parser.add_argument("--database", default=os.getenv("SQLSERVER_DATABASE"))
-    parser.add_argument("--username", default=os.getenv("SQLSERVER_USERNAME"))
-    parser.add_argument("--password", default=os.getenv("SQLSERVER_PASSWORD"))
+    parser.add_argument("--server", default=os.getenv("GUEREH_SQLSERVER_SERVER"))
+    parser.add_argument("--database", default=os.getenv("GUEREH_SQLSERVER_DATABASE"))
+    parser.add_argument("--username", default=os.getenv("GUEREH_SQLSERVER_USERNAME"))
+    parser.add_argument("--password", default=os.getenv("GUEREH_SQLSERVER_PASSWORD"))
     parser.add_argument(
         "--trusted-connection",
         action="store_true",
-        default=parse_env_bool("SQLSERVER_TRUSTED_CONNECTION", False),
+        default=parse_env_bool("GUEREH_SQLSERVER_TRUSTED_CONNECTION", False),
     )
     parser.add_argument(
         "--no-encrypt",
         action="store_true",
-        default=parse_env_bool("SQLSERVER_NO_ENCRYPT", False),
+        default=parse_env_bool("GUEREH_SQLSERVER_NO_ENCRYPT", False),
     )
     parser.add_argument(
         "--no-trust-server-certificate",
         action="store_true",
-        default=not parse_env_bool("SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
+        default=not parse_env_bool("GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
     )
     parser.add_argument("--source-language-id", type=int)
+    parser.add_argument(
+        "--database-target",
+        choices=("guereh", "rugstrust", "both", "auto"),
+        default=os.getenv("DATABASE_TARGET", "auto"),
+        help=(
+            "Scheduled target: guereh, rugstrust, both, or auto. "
+            "auto includes RugsTrust when its RUGSTRUST_SQLSERVER_* settings are configured."
+        ),
+    )
+    parser.add_argument("--rugstrust-driver", default=os.getenv("RUGSTRUST_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"))
+    parser.add_argument("--rugstrust-server", default=os.getenv("RUGSTRUST_SQLSERVER_SERVER"))
+    parser.add_argument("--rugstrust-database", default=os.getenv("RUGSTRUST_SQLSERVER_DATABASE"))
+    parser.add_argument("--rugstrust-username", default=os.getenv("RUGSTRUST_SQLSERVER_USERNAME"))
+    parser.add_argument("--rugstrust-password", default=os.getenv("RUGSTRUST_SQLSERVER_PASSWORD"))
+    parser.add_argument(
+        "--rugstrust-trusted-connection",
+        action="store_true",
+        default=parse_env_bool("RUGSTRUST_SQLSERVER_TRUSTED_CONNECTION", False),
+    )
+    parser.add_argument(
+        "--rugstrust-no-encrypt",
+        action="store_true",
+        default=parse_env_bool("RUGSTRUST_SQLSERVER_NO_ENCRYPT", False),
+    )
+    parser.add_argument(
+        "--rugstrust-no-trust-server-certificate",
+        action="store_true",
+        default=not parse_env_bool("RUGSTRUST_SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
+    )
+    parser.add_argument(
+        "--rugstrust-schema",
+        default=os.getenv("RUGSTRUST_SQLSERVER_SCHEMA", RUGSTRUST_DEFAULT_SCHEMA),
+    )
     parser.add_argument(
         "--target-language-ids",
         help="Comma-separated destination language IDs (for example: 2,3).",
@@ -415,8 +529,19 @@ def build_job_config(args: argparse.Namespace) -> ScheduledJobConfig:
     if not cleanup_languages:
         raise ValueError("At least one cleanup language is required.")
 
+    rugstrust_connection = build_rugstrust_connection_settings(args)
+    database_target = normalize_database_target(
+        args.database_target,
+        rugstrust_available=rugstrust_connection is not None,
+    )
+    if database_target == RUGSTRUST_DATABASE_TARGET:
+        if rugstrust_connection is None:
+            raise ValueError(
+                "Configure RUGSTRUST_SQLSERVER_SERVER and "
+                "RUGSTRUST_SQLSERVER_DATABASE for the RugsTrust database."
+            )
     connection = SqlServerConnectionSettings(
-        connection_string=args.connection_string,
+        connection_string=None,
         driver=args.driver,
         server=args.server or "",
         database=args.database or "",
@@ -457,6 +582,31 @@ def build_job_config(args: argparse.Namespace) -> ScheduledJobConfig:
             if args.lock_timeout is None
             else max(args.lock_timeout, 0)
         ),
+        database_target=database_target,
+        rugstrust_connection=rugstrust_connection,
+        rugstrust_schema_name=(args.rugstrust_schema or "").strip() or RUGSTRUST_DEFAULT_SCHEMA,
+    )
+
+
+def build_rugstrust_connection_settings(
+    args: argparse.Namespace,
+) -> SqlServerConnectionSettings | None:
+    """Build RugsTrust settings when its server/database pair is configured."""
+
+    server = (args.rugstrust_server or "").strip()
+    database = (args.rugstrust_database or "").strip()
+    if not server and not database:
+        return None
+    return SqlServerConnectionSettings(
+        connection_string=None,
+        driver=args.rugstrust_driver,
+        server=server,
+        database=database,
+        username=(args.rugstrust_username or "").strip() or None,
+        password=args.rugstrust_password,
+        trusted_connection=args.rugstrust_trusted_connection,
+        encrypt=not args.rugstrust_no_encrypt,
+        trust_server_certificate=not args.rugstrust_no_trust_server_certificate,
     )
 
 

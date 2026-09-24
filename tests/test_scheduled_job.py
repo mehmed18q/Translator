@@ -15,6 +15,7 @@ from translator_app.scheduled_job import (
     build_job_config,
     build_parser,
     run_scheduled_job,
+    scheduled_database_configs,
 )
 from translator_app.service import TranslationSummary
 from translator_app.cleanup_service import CleanupSummary
@@ -24,8 +25,10 @@ class ScheduledJobTests(unittest.TestCase):
     def test_builds_noninteractive_config_with_target_queue_and_table(self) -> None:
         args = build_parser().parse_args(
             [
-                "--connection-string",
-                "DRIVER=test;SERVER=test;DATABASE=test",
+                "--server",
+                "guereh",
+                "--database",
+                "main",
                 "--source-language-id",
                 "1",
                 "--target-language-ids",
@@ -100,6 +103,38 @@ class ScheduledJobTests(unittest.TestCase):
             run_scheduled_job(config, logger=logging.getLogger("scheduled-job-test"))
 
         self.assertEqual(events, ["translation", "cleanup"])
+
+    def test_auto_target_runs_guereh_then_rugstrust_without_prompting(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--server",
+                "guereh",
+                "--database",
+                "main",
+                "--rugstrust-server",
+                "rugstrust",
+                "--rugstrust-database",
+                "rugdb",
+                "--rugstrust-schema",
+                "rugstrust",
+                "--source-language-id",
+                "1",
+                "--target-language-ids",
+                "2",
+                "--dry-run",
+            ]
+        )
+
+        config = build_job_config(args)
+        targets = scheduled_database_configs(config)
+
+        self.assertEqual(
+            [item.database_target for item in targets],
+            ["guereh", "rugstrust"],
+        )
+        self.assertEqual(targets[0].connection.server, "guereh")
+        self.assertEqual(targets[1].connection.server, "rugstrust")
+        self.assertEqual((targets[1].schema_name, targets[1].table_name), ("rugstrust", "RugCertificationLocalize"))
 
 
 if __name__ == "__main__":

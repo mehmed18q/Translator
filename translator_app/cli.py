@@ -13,6 +13,12 @@ from translator_app.config import (
     RuntimeConfig,
     SqlServerConnectionSettings,
 )
+from translator_app.database_targets import (
+    GUEREH_DATABASE_TARGET,
+    RUGSTRUST_DATABASE_TARGET,
+    normalize_database_target,
+    rugstrust_runtime_config,
+)
 from translator_app.languages import format_language_options, get_language
 from translator_app.logging_config import configure_logging
 from translator_app.runtime_paths import application_dir
@@ -37,28 +43,14 @@ def main(argv: list[str] | None = None) -> int:
         logger, log_file = configure_logging(config.log_dir)
         logger.info("Log file: %s", log_file)
 
-        read_connection = connect(config.connection_string, autocommit=False)
-        write_connection = (
-            connect(config.connection_string, autocommit=True)
-            if not config.dry_run
-            else read_connection
-        )
-        try:
-            service = DatabaseTranslationService(
-                schema_reader=SqlServerSchemaReader(read_connection),
-                repository=SqlServerLocalizationRepository(
-                    read_connection,
-                    write_connection,
-                ),
-                translator=create_translator(config, logger=logger),
+        for target_config in build_database_configs(config, args):
+            _run_database_config(
+                target_config,
+                args=args,
                 logger=logger,
+                allow_test_table=target_config.database_target != RUGSTRUST_DATABASE_TARGET,
             )
             service_started = True
-            run_requested_mode(service, config, args, logger)
-        finally:
-            if write_connection is not read_connection:
-                write_connection.close()
-            read_connection.close()
         return 0
     except KeyboardInterrupt:
         if logger is not None and not service_started:
@@ -91,37 +83,63 @@ def build_parser() -> argparse.ArgumentParser:
         description="Translate SQL Server Localize/Localizes tables.",
     )
     parser.add_argument(
-        "--connection-string",
-        default=os.getenv("SQLSERVER_CONNECTION_STRING"),
-    )
-    parser.add_argument(
         "--driver",
-        default=os.getenv("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"),
+        default=os.getenv("GUEREH_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"),
     )
-    parser.add_argument("--server", default=os.getenv("SQLSERVER_SERVER"))
-    parser.add_argument("--database", default=os.getenv("SQLSERVER_DATABASE"))
-    parser.add_argument("--username", default=os.getenv("SQLSERVER_USERNAME"))
-    parser.add_argument("--password", default=os.getenv("SQLSERVER_PASSWORD"))
+    parser.add_argument("--server", default=os.getenv("GUEREH_SQLSERVER_SERVER"))
+    parser.add_argument("--database", default=os.getenv("GUEREH_SQLSERVER_DATABASE"))
+    parser.add_argument("--username", default=os.getenv("GUEREH_SQLSERVER_USERNAME"))
+    parser.add_argument("--password", default=os.getenv("GUEREH_SQLSERVER_PASSWORD"))
     parser.add_argument(
         "--trusted-connection",
         action="store_true",
-        default=os.getenv("SQLSERVER_TRUSTED_CONNECTION", "").lower()
+        default=os.getenv("GUEREH_SQLSERVER_TRUSTED_CONNECTION", "").lower()
         in {"1", "true", "yes"},
     )
     parser.add_argument(
         "--no-encrypt",
         action="store_true",
-        default=parse_env_bool("SQLSERVER_NO_ENCRYPT", False),
+        default=parse_env_bool("GUEREH_SQLSERVER_NO_ENCRYPT", False),
         help="Set Encrypt=no in the SQL Server connection string.",
     )
     parser.add_argument(
         "--no-trust-server-certificate",
         action="store_true",
-        default=not parse_env_bool("SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
+        default=not parse_env_bool("GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
         help="Set TrustServerCertificate=no in the SQL Server connection string.",
     )
     parser.add_argument("--source-language-id", type=int)
     parser.add_argument("--target-language-id", type=int)
+    parser.add_argument(
+        "--database-target",
+        choices=("guereh", "rugstrust", "both", "auto"),
+        default=os.getenv("DATABASE_TARGET", "guereh"),
+        help="Translate the Guereh database, RugsTrust database, or both.",
+    )
+    parser.add_argument("--rugstrust-driver", default=os.getenv("RUGSTRUST_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server"))
+    parser.add_argument("--rugstrust-server", default=os.getenv("RUGSTRUST_SQLSERVER_SERVER"))
+    parser.add_argument("--rugstrust-database", default=os.getenv("RUGSTRUST_SQLSERVER_DATABASE"))
+    parser.add_argument("--rugstrust-username", default=os.getenv("RUGSTRUST_SQLSERVER_USERNAME"))
+    parser.add_argument("--rugstrust-password", default=os.getenv("RUGSTRUST_SQLSERVER_PASSWORD"))
+    parser.add_argument(
+        "--rugstrust-trusted-connection",
+        action="store_true",
+        default=parse_env_bool("RUGSTRUST_SQLSERVER_TRUSTED_CONNECTION", False),
+    )
+    parser.add_argument(
+        "--rugstrust-no-encrypt",
+        action="store_true",
+        default=parse_env_bool("RUGSTRUST_SQLSERVER_NO_ENCRYPT", False),
+    )
+    parser.add_argument(
+        "--rugstrust-no-trust-server-certificate",
+        action="store_true",
+        default=not parse_env_bool("RUGSTRUST_SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
+    )
+    parser.add_argument(
+        "--rugstrust-schema",
+        default=os.getenv("RUGSTRUST_SQLSERVER_SCHEMA", "dbo"),
+    )
     parser.add_argument("--schema", dest="schema_name")
     parser.add_argument("--table", dest="table_name")
     parser.add_argument(
@@ -216,7 +234,20 @@ def build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     else:
         dry_run = True
 
-    connection_settings = prompt_connection_settings(args)
+    rugstrust_connection_settings = build_rugstrust_connection_settings(args)
+    database_target = normalize_database_target(
+        args.database_target,
+        rugstrust_available=rugstrust_connection_settings is not None,
+    )
+    if database_target == RUGSTRUST_DATABASE_TARGET:
+        if rugstrust_connection_settings is None:
+            raise ValueError(
+                "Configure --rugstrust-server and --rugstrust-database or the "
+                "RUGSTRUST_SQLSERVER_* environment settings for the RugsTrust database."
+            )
+        connection_settings = rugstrust_connection_settings
+    else:
+        connection_settings = prompt_connection_settings(args)
     schema_name, table_name = split_table_reference(
         args.table_name,
         args.schema_name,
@@ -242,7 +273,73 @@ def build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
             initial_delay_seconds=max(args.retry_delay, 0),
             backoff_factor=max(args.retry_backoff, 1),
         ),
+        database_target=database_target,
+        rugstrust_connection_settings=rugstrust_connection_settings,
     )
+
+
+def build_database_configs(
+    config: RuntimeConfig,
+    args: argparse.Namespace,
+) -> tuple[RuntimeConfig, ...]:
+    """Return the selected database runs in deterministic order."""
+
+    rugstrust_connection_settings = build_rugstrust_connection_settings(args)
+    target = normalize_database_target(
+        config.database_target,
+        rugstrust_available=rugstrust_connection_settings is not None,
+    )
+    if target == GUEREH_DATABASE_TARGET:
+        return (replace(config, database_target=GUEREH_DATABASE_TARGET),)
+    if rugstrust_connection_settings is None:
+        raise ValueError(
+            "Configure --rugstrust-server and --rugstrust-database or the "
+            "RUGSTRUST_SQLSERVER_* environment settings for the RugsTrust database."
+        )
+    rugstrust_config = rugstrust_runtime_config(
+        config,
+        connection_settings=rugstrust_connection_settings,
+        schema_name=args.rugstrust_schema,
+    )
+    if target == RUGSTRUST_DATABASE_TARGET:
+        return (rugstrust_config,)
+    return (
+        replace(config, database_target=GUEREH_DATABASE_TARGET),
+        rugstrust_config,
+    )
+
+
+def _run_database_config(
+    config: RuntimeConfig,
+    *,
+    args: argparse.Namespace,
+    logger: logging.Logger,
+    allow_test_table: bool,
+) -> None:
+    read_connection = connect(config.connection_string, autocommit=False)
+    write_connection = (
+        connect(config.connection_string, autocommit=True)
+        if not config.dry_run
+        else read_connection
+    )
+    try:
+        service = DatabaseTranslationService(
+            schema_reader=SqlServerSchemaReader(read_connection),
+            repository=SqlServerLocalizationRepository(
+                read_connection,
+                write_connection,
+            ),
+            translator=create_translator(config, logger=logger),
+            logger=logger,
+        )
+        if allow_test_table:
+            run_requested_mode(service, config, args, logger)
+        else:
+            service.run(config)
+    finally:
+        if write_connection is not read_connection:
+            write_connection.close()
+        read_connection.close()
 
 
 def run_requested_mode(
@@ -343,19 +440,6 @@ def normalize_sql_name(value: str | None) -> str | None:
 
 
 def prompt_connection_settings(args: argparse.Namespace) -> SqlServerConnectionSettings:
-    if args.connection_string:
-        return SqlServerConnectionSettings(
-            connection_string=args.connection_string,
-            driver=args.driver,
-            server=args.server or "",
-            database=args.database or "",
-            username=args.username,
-            password=args.password,
-            trusted_connection=args.trusted_connection,
-            encrypt=not args.no_encrypt,
-            trust_server_certificate=not args.no_trust_server_certificate,
-        )
-
     server = args.server or prompt_required("SQL Server host/name")
     database = args.database or prompt_required("Database name")
     trusted_connection = args.trusted_connection
@@ -384,6 +468,26 @@ def prompt_connection_settings(args: argparse.Namespace) -> SqlServerConnectionS
         trusted_connection=trusted_connection,
         encrypt=not args.no_encrypt,
         trust_server_certificate=not args.no_trust_server_certificate,
+    )
+
+
+def build_rugstrust_connection_settings(
+    args: argparse.Namespace,
+) -> SqlServerConnectionSettings | None:
+    server = (args.rugstrust_server or "").strip()
+    database = (args.rugstrust_database or "").strip()
+    if not server and not database:
+        return None
+    return SqlServerConnectionSettings(
+        connection_string=None,
+        driver=args.rugstrust_driver,
+        server=server,
+        database=database,
+        username=(args.rugstrust_username or "").strip() or None,
+        password=args.rugstrust_password,
+        trusted_connection=args.rugstrust_trusted_connection,
+        encrypt=not args.rugstrust_no_encrypt,
+        trust_server_certificate=not args.rugstrust_no_trust_server_certificate,
     )
 
 

@@ -11,6 +11,7 @@ from translator_app.models import ColumnInfo, LocalizeTable
 from translator_app.service import DatabaseTranslationService
 from translator_app.sqlserver.repository import (
     TARGET_EXISTS_COLUMN_NAME,
+    TranslationFailureRecord,
     target_value_column_name,
 )
 from translator_app.translators.base import Translator
@@ -90,6 +91,28 @@ class FakeRepository:
         return len(translated_values)
 
 
+class PersistedFailureRepository(FakeRepository):
+    def __init__(
+        self,
+        rows: list[dict[str, object]],
+        failures: list[TranslationFailureRecord],
+    ) -> None:
+        super().__init__(rows)
+        self.failures = list(failures)
+        self.recorded_failures: list[dict[str, object]] = []
+        self.deleted_failures: list[int] = []
+
+    def list_translation_failures(self, **_kwargs: object) -> list[TranslationFailureRecord]:
+        return list(self.failures)
+
+    def delete_translation_failure(self, failure_id: int) -> None:
+        self.deleted_failures.append(failure_id)
+        self.failures = [item for item in self.failures if item.failure_id != failure_id]
+
+    def record_translation_failure(self, **kwargs: object) -> None:
+        self.recorded_failures.append(kwargs)
+
+
 class PrefixTranslator(Translator):
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -106,6 +129,18 @@ class PrefixTranslator(Translator):
         return f"{target_language}:{text}"
 
 
+class FailingTranslator(Translator):
+    def translate(
+        self,
+        text: str,
+        source_language: str,
+        target_language: str,
+        *,
+        text_format: str = "text",
+    ) -> str:
+        raise RuntimeError("provider unavailable")
+
+
 class StrictFormattingHandler(logging.Handler):
     def __init__(self) -> None:
         super().__init__()
@@ -116,6 +151,58 @@ class StrictFormattingHandler(logging.Handler):
 
 
 class ServiceUpdateTests(unittest.TestCase):
+    def test_persists_row_when_translation_fails(self) -> None:
+        row = {
+            "SampleId": 10,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        repository = PersistedFailureRepository([row], [])
+
+        summary = build_service(repository, FailingTranslator()).run(
+            replace(build_config(), retry=RetrySettings(attempts=1, initial_delay_seconds=0, backoff_factor=1))
+        )
+
+        self.assertEqual(summary.failed_rows, 1)
+        self.assertEqual(len(repository.recorded_failures), 1)
+        self.assertEqual(repository.recorded_failures[0]["entity_key_values"], {"SampleId": 10})
+        self.assertFalse(repository.recorded_failures[0]["target_exists"])
+
+    def test_retries_persisted_failure_before_new_pending_rows(self) -> None:
+        source_row = {
+            "SampleId": 9,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        failure = TranslationFailureRecord(
+            failure_id=44,
+            schema_name="dbo",
+            table_name="SampleLocalize",
+            source_language_id=1,
+            target_language_id=2,
+            entity_key_values={"SampleId": 9},
+            source_row=source_row,
+            target_exists=False,
+            missing_columns=(),
+            failure_reason="previous failure",
+            attempt_count=2,
+        )
+        repository = PersistedFailureRepository([], [failure])
+        translator = PrefixTranslator()
+
+        summary = build_service(repository, translator).run(build_config())
+
+        self.assertEqual(summary.inserted_rows, 1)
+        self.assertEqual(repository.deleted_failures, [44])
+        self.assertEqual(repository.failures, [])
+        self.assertEqual(repository.inserts[0]["source_row"], source_row)
+
     def test_updates_only_empty_target_text_columns(self) -> None:
         row = {
             "SampleId": 1,
