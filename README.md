@@ -9,15 +9,15 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.3.0" src="https://img.shields.io/badge/version-1.3.0-2563eb">
+  <img alt="Version 2.4.1" src="https://img.shields.io/badge/version-2.4.1-2563eb">
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="84 tests passing" src="https://img.shields.io/badge/tests-84%20passing-2ea44f">
+  <img alt="91 tests passing" src="https://img.shields.io/badge/tests-91%20passing-2ea44f">
 </p>
 
 <p align="center">
-  <strong>Version 1.3.0</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
+  <strong>Version 2.4.1</strong> · <strong>2026</strong> · Created by <strong><a href="https://github.com/mehmed18q">Sadeq Kiumarsi</a></strong>
 </p>
 
 ---
@@ -125,7 +125,7 @@ Keep `Translator.exe` in a writable folder. The `.env` file can contain database
 The footer is outside the tab area and always shows:
 
 ```text
-Created by Sadeq Kiumarsi | 2026 | Version 1.3.0 | GitHub
+Created by Sadeq Kiumarsi | 2026 | Version 2.4.1 | GitHub
 ```
 
 When `Run All Tables` is selected, a modal review lists the tables ordered by
@@ -274,17 +274,29 @@ python main.py --gui
 
 ### Configure with `.env`
 
-Copy `.env.example` to `.env`, then update the values you need. A complete connection string can also be supplied through `SQLSERVER_CONNECTION_STRING`.
+Copy `.env.example` to `.env`, then update the values you need. Database
+connection strings are assembled internally from the Guereh/RugsTrust fields;
+no raw connection-string setting is required.
 
 ```dotenv
-SQLSERVER_DRIVER=ODBC Driver 18 for SQL Server
-SQLSERVER_SERVER=localhost
-SQLSERVER_DATABASE=YourDatabase
-SQLSERVER_USERNAME=sa
-SQLSERVER_PASSWORD=your_password
-SQLSERVER_TRUSTED_CONNECTION=false
-SQLSERVER_NO_ENCRYPT=false
-SQLSERVER_TRUST_SERVER_CERTIFICATE=true
+GUEREH_SQLSERVER_DRIVER=ODBC Driver 18 for SQL Server
+GUEREH_SQLSERVER_SERVER=localhost
+GUEREH_SQLSERVER_DATABASE=YourDatabase
+GUEREH_SQLSERVER_USERNAME=sa
+GUEREH_SQLSERVER_PASSWORD=your_password
+GUEREH_SQLSERVER_TRUSTED_CONNECTION=false
+GUEREH_SQLSERVER_NO_ENCRYPT=false
+GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE=true
+
+RUGSTRUST_SQLSERVER_DRIVER=ODBC Driver 18 for SQL Server
+RUGSTRUST_SQLSERVER_SERVER=
+RUGSTRUST_SQLSERVER_DATABASE=
+RUGSTRUST_SQLSERVER_USERNAME=
+RUGSTRUST_SQLSERVER_PASSWORD=
+RUGSTRUST_SQLSERVER_TRUSTED_CONNECTION=false
+RUGSTRUST_SQLSERVER_NO_ENCRYPT=false
+RUGSTRUST_SQLSERVER_TRUST_SERVER_CERTIFICATE=true
+RUGSTRUST_SQLSERVER_SCHEMA=dbo
 
 LIBRETRANSLATE_URL=http://127.0.0.1:5000
 LIBRETRANSLATE_API_KEY=
@@ -361,6 +373,13 @@ operation. Omitting `JOB_TABLE` processes all eligible `Localize`/
 `Localizes` tables. The job executes writes by default; set `JOB_DRY_RUN=true`
 or pass `--dry-run` for a preview.
 
+The job is non-interactive and automatic. With `DATABASE_TARGET=auto` (the
+default for the scheduled job), setting the `RUGSTRUST_SQLSERVER_SERVER` and
+`RUGSTRUST_SQLSERVER_DATABASE` values causes each run to process the Guereh database first and then the fixed
+`dbo.RugCertificationLocalize` table in the RugsTrust database. Leave those settings
+empty to run only the Guereh database. Translation always finishes before
+cleanup, and the process lock prevents overlapping runs.
+
 For a nightly run at local midnight, use the example in
 [`deploy/translation-cleanup.cron.example`](deploy/translation-cleanup.cron.example):
 
@@ -368,8 +387,37 @@ For a nightly run at local midnight, use the example in
 0 0 * * * cd /opt/translator && /opt/translator/.venv/bin/python -m translator_app.scheduled_job --env-file /opt/translator/job.env >> /opt/translator/translation-cleanup-cron.log 2>&1
 ```
 
-The existing `main.py` GUI and interactive CLI are not changed and continue to
-work independently of this job.
+The GUI and interactive CLI can also select the Guereh database, RugsTrust database,
+or both; they remain independent of the scheduled job.
+
+## Persisted translation failures and retry
+
+The job/application automatically creates this table during its first execute
+run on each configured database. To create it manually instead, execute
+[`sql/create_translation_failure_log.sql`](sql/create_translation_failure_log.sql)
+once on the same SQL Server database used by the application. The table is
+`dbo.TranslatorTranslationFailureLog`; it stores the source row, entity key,
+language pair, missing columns, reason, and retry count. Credentials are not
+stored in the table: the existing application/job database connection is used.
+
+For example, with `sqlcmd` and SQL authentication:
+
+```bash
+sqlcmd -S "$GUEREH_SQLSERVER_SERVER" -d "$GUEREH_SQLSERVER_DATABASE" \
+  -U "$GUEREH_SQLSERVER_USERNAME" -P "$GUEREH_SQLSERVER_PASSWORD" \
+  -i sql/create_translation_failure_log.sql
+```
+
+If `DATABASE_TARGET=auto` or `both` is used, each database keeps its own
+failure records; the warm-up runs separately for Guereh and RugsTrust.
+
+When a database translation row fails during an execute-mode run, it is
+upserted into this table. At the beginning of each target-language run, the
+application and scheduled job read the unresolved rows first. A successful
+retry writes the translation and removes the log row. A failed retry updates
+the reason/attempt count and skips that row for the rest of the current run;
+the normal queue continues with other rows. `--dry-run` never writes, updates,
+or deletes failure-log rows.
 
 ## Build the Windows executable
 
@@ -407,14 +455,14 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **84 tests**.
+The current release passes **91 tests**.
 
 ## Versioning
 
 The single source of truth for the application version is `translator_app/__init__.py`:
 
 ```python
-__version__ = "1.3.0"
+__version__ = "2.4.1"
 ```
 
 Update this value for future releases. The GUI window title and permanent footer read it automatically, making the version visible to every user.

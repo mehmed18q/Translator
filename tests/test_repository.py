@@ -6,6 +6,7 @@ from translator_app.models import ColumnInfo, LocalizeTable, build_table_transla
 from translator_app.sqlserver.repository import (
     TARGET_EXISTS_COLUMN_NAME,
     SqlServerLocalizationRepository,
+    TranslationFailureRecord,
     target_value_column_name,
 )
 
@@ -56,6 +57,112 @@ class FakeCursor:
 
 
 class RepositoryTests(unittest.TestCase):
+    def test_warmup_creates_failure_log_table_and_indexes_idempotently(self) -> None:
+        connection = FakeConnection(batches=[])
+        repository = SqlServerLocalizationRepository(connection)
+
+        repository.ensure_translation_failure_log_table()
+
+        self.assertEqual(len(connection.cursors), 1)
+        sql = connection.cursors[0].sql
+        self.assertIn("CREATE TABLE [dbo].[TranslatorTranslationFailureLog]", sql)
+        self.assertIn("UX_TranslatorTranslationFailureLog_Fingerprint", sql)
+        self.assertIn("IX_TranslatorTranslationFailureLog_Queue", sql)
+
+    def test_reads_persisted_translation_failures(self) -> None:
+        connection = FakeConnection(
+            batches=[
+                [
+                    (
+                        7,
+                        "dbo",
+                        "SampleLocalize",
+                        1,
+                        2,
+                        '{"SampleId":7}',
+                        '{"SampleId":7,"Title":"خانه"}',
+                        0,
+                        '["Title"]',
+                        "translation provider failed",
+                        3,
+                    )
+                ]
+            ]
+        )
+        repository = SqlServerLocalizationRepository(connection)
+
+        failures = repository.list_translation_failures(
+            source_language_id=1,
+            target_language_id=2,
+        )
+
+        self.assertEqual(
+            failures,
+            [
+                TranslationFailureRecord(
+                    failure_id=7,
+                    schema_name="dbo",
+                    table_name="SampleLocalize",
+                    source_language_id=1,
+                    target_language_id=2,
+                    entity_key_values={"SampleId": 7},
+                    source_row={"SampleId": 7, "Title": "خانه"},
+                    target_exists=False,
+                    missing_columns=("Title",),
+                    failure_reason="translation provider failed",
+                    attempt_count=3,
+                )
+            ],
+        )
+        self.assertIn("TranslatorTranslationFailureLog", connection.cursors[0].sql)
+        self.assertEqual(connection.cursors[0].params, (1, 2))
+
+    def test_records_failure_with_stable_fingerprint_and_deletes_by_id(self) -> None:
+        connection = FakeConnection(batches=[[], []])
+        repository = SqlServerLocalizationRepository(connection)
+        table = build_table()
+
+        repository.record_translation_failure(
+            table=table,
+            source_language_id=1,
+            target_language_id=2,
+            entity_key_values={"SampleId": 7},
+            source_row={"SampleId": 7, "Title": "خانه"},
+            target_exists=False,
+            missing_columns=("Title",),
+            failure_reason="failed",
+        )
+        repository.delete_translation_failure(12)
+
+        self.assertIn("UPDATE [dbo].[TranslatorTranslationFailureLog]", connection.cursors[0].sql)
+        self.assertIn("INSERT INTO [dbo].[TranslatorTranslationFailureLog]", connection.cursors[0].sql)
+        self.assertEqual(connection.cursors[1].params, (12,))
+
+    def test_reads_current_target_state_for_retry_after_unknown_commit_result(self) -> None:
+        connection = FakeConnection(
+            batches=[[("Home", None)]],
+            description=[("Title",), ("Description",)],
+        )
+        repository = SqlServerLocalizationRepository(connection)
+        plan = build_table_translation_plan(build_table_with_description())
+
+        state = repository.get_target_state(
+            plan,
+            entity_key_values={"SampleId": 7},
+            target_language_id=2,
+        )
+
+        self.assertEqual(
+            state,
+            {
+                TARGET_EXISTS_COLUMN_NAME: 1,
+                target_value_column_name("Title"): "Home",
+                target_value_column_name("Description"): None,
+            },
+        )
+        self.assertIn("WHERE [SampleId] = ? AND [LanguageId] = ?", connection.cursors[0].sql)
+        self.assertEqual(connection.cursors[0].params, (7, 2))
+
     def test_counts_rows_when_all_textual_content_columns_are_blank(self) -> None:
         connection = FakeConnection(batches=[[(4,)]])
         repository = SqlServerLocalizationRepository(connection)

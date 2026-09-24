@@ -82,6 +82,14 @@ class RuntimeConfig:
     # remains the first destination for backwards compatibility with callers
     # that construct RuntimeConfig directly.
     target_languages: tuple[LanguageOption, ...] = ()
+    # ``guereh`` is the existing database. ``rugstrust`` selects the
+    # independent RugsTrust database; orchestration layers may use ``both``.
+    database_target: str = "guereh"
+    # Connection details for a secondary target are kept as structured
+    # settings.  The UI/job never accepts a raw connection string; it is
+    # assembled only at the final database-open boundary.
+    rugstrust_connection_settings: SqlServerConnectionSettings | None = None
+    rugstrust_schema_name: str = "dbo"
 
     def selected_target_languages(self) -> tuple[LanguageOption, ...]:
         """Return the destination queue, falling back to the legacy field."""

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
+import hashlib
+import json
 from uuid import uuid4
 
 from translator_app.models import (
@@ -14,6 +17,25 @@ from translator_app.sqlserver.sql import quote_identifier, quote_table
 DEFAULT_SQL_COMMAND_TIMEOUT_SECONDS = 120
 TARGET_EXISTS_COLUMN_NAME = "__target_exists"
 TARGET_VALUE_COLUMN_PREFIX = "__target_"
+TRANSLATION_FAILURE_TABLE_SCHEMA = "dbo"
+TRANSLATION_FAILURE_TABLE_NAME = "TranslatorTranslationFailureLog"
+
+
+@dataclass(frozen=True)
+class TranslationFailureRecord:
+    """A persisted database-translation row that failed in a prior run."""
+
+    failure_id: int
+    schema_name: str
+    table_name: str
+    source_language_id: int
+    target_language_id: int
+    entity_key_values: dict[str, object]
+    source_row: dict[str, object]
+    target_exists: bool
+    missing_columns: tuple[str, ...]
+    failure_reason: str
+    attempt_count: int
 
 
 def target_value_column_name(column_name: str) -> str:
@@ -30,6 +52,71 @@ class SqlServerLocalizationRepository:
         self.read_connection = read_connection
         self.write_connection = write_connection or read_connection
         self.command_timeout_seconds = command_timeout_seconds
+
+    def ensure_translation_failure_log_table(self) -> None:
+        """Create the persistent failure queue and indexes if they are absent.
+
+        This warm-up is intentionally idempotent so the scheduled job can use
+        a newly provisioned Guereh or RugsTrust database without a separate SQL
+        script step.  The operation uses the write connection and is skipped
+        by the service for dry-run executions.
+        """
+
+        sql = f"""
+IF OBJECT_ID(N'[{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}]
+    (
+        [FailureId] BIGINT IDENTITY(1,1) NOT NULL
+            CONSTRAINT [PK_{TRANSLATION_FAILURE_TABLE_NAME}] PRIMARY KEY,
+        [FailureFingerprint] VARCHAR(64) NOT NULL,
+        [SchemaName] SYSNAME NOT NULL,
+        [TableName] SYSNAME NOT NULL,
+        [SourceLanguageId] INT NOT NULL,
+        [TargetLanguageId] INT NOT NULL,
+        [EntityKeyJson] NVARCHAR(MAX) NOT NULL,
+        [SourceRowJson] NVARCHAR(MAX) NOT NULL,
+        [TargetExists] BIT NOT NULL
+            CONSTRAINT [DF_{TRANSLATION_FAILURE_TABLE_NAME}_TargetExists] DEFAULT (0),
+        [MissingColumnsJson] NVARCHAR(MAX) NULL,
+        [FailureReason] NVARCHAR(MAX) NOT NULL,
+        [FirstFailedAt] DATETIME2(3) NOT NULL
+            CONSTRAINT [DF_{TRANSLATION_FAILURE_TABLE_NAME}_FirstFailedAt] DEFAULT (SYSUTCDATETIME()),
+        [LastFailedAt] DATETIME2(3) NOT NULL
+            CONSTRAINT [DF_{TRANSLATION_FAILURE_TABLE_NAME}_LastFailedAt] DEFAULT (SYSUTCDATETIME()),
+        [AttemptCount] INT NOT NULL
+            CONSTRAINT [DF_{TRANSLATION_FAILURE_TABLE_NAME}_AttemptCount] DEFAULT (1),
+        CONSTRAINT [CK_{TRANSLATION_FAILURE_TABLE_NAME}_AttemptCount]
+            CHECK ([AttemptCount] >= 1)
+    );
+END;
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'[{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}]')
+      AND name = N'UX_{TRANSLATION_FAILURE_TABLE_NAME}_Fingerprint'
+)
+BEGIN
+    CREATE UNIQUE INDEX [UX_{TRANSLATION_FAILURE_TABLE_NAME}_Fingerprint]
+        ON [{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}] ([FailureFingerprint]);
+END;
+IF NOT EXISTS
+(
+    SELECT 1 FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'[{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}]')
+      AND name = N'IX_{TRANSLATION_FAILURE_TABLE_NAME}_Queue'
+)
+BEGIN
+    CREATE INDEX [IX_{TRANSLATION_FAILURE_TABLE_NAME}_Queue]
+        ON [{TRANSLATION_FAILURE_TABLE_SCHEMA}].[{TRANSLATION_FAILURE_TABLE_NAME}]
+        ([SourceLanguageId], [TargetLanguageId], [LastFailedAt], [FailureId]);
+END;
+"""
+        cursor = self._cursor(self.write_connection)
+        try:
+            cursor.execute(sql)
+        finally:
+            cursor.close()
 
     def count_missing_rows(
         self,
@@ -338,6 +425,212 @@ WHERE {entity_key_column} = ? AND {language_column} = ?
         finally:
             cursor.close()
 
+    def get_target_state(
+        self,
+        plan: TableTranslationPlan,
+        *,
+        entity_key_values: dict[str, object],
+        target_language_id: int,
+    ) -> dict[str, object] | None:
+        """Return current target text values for a persisted failure row.
+
+        A write can commit and still report an error to the caller (for
+        example, if the connection drops immediately afterwards). Refreshing
+        the target state prevents the retry pass from attempting a duplicate
+        insert in that case.
+        """
+
+        table_name = quote_table(plan.table.schema_name, plan.table.table_name)
+        key_values = self._normalize_key_values(
+            plan.table,
+            entity_key_value=None,
+            entity_key_values=entity_key_values,
+        )
+        key_condition = " AND ".join(
+            f"{quote_identifier(column_name)} = ?"
+            for column_name, _value in key_values
+        )
+        text_columns = plan.text_column_names
+        select_columns = ", ".join(
+            quote_identifier(column_name) for column_name in text_columns
+        )
+        if not select_columns:
+            return None
+        language_column = quote_identifier(required(plan.table.language_column_name))
+        sql = f"""
+SELECT TOP (1) {select_columns}
+FROM {table_name}
+WHERE {key_condition} AND {language_column} = ?
+"""
+        cursor = self._cursor(self.read_connection)
+        try:
+            row = cursor.execute(
+                sql,
+                *(value for _column_name, value in key_values),
+                target_language_id,
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                TARGET_EXISTS_COLUMN_NAME: 1,
+                **{
+                    target_value_column_name(column_name): value
+                    for column_name, value in zip(text_columns, row, strict=False)
+                },
+            }
+        finally:
+            cursor.close()
+
+    def list_translation_failures(
+        self,
+        *,
+        source_language_id: int,
+        target_language_id: int,
+        schema_name: str | None = None,
+        table_name: str | None = None,
+    ) -> list[TranslationFailureRecord]:
+        """Read unresolved translation failures for the current language pair."""
+
+        conditions = [
+            "SourceLanguageId = ?",
+            "TargetLanguageId = ?",
+        ]
+        params: list[object] = [source_language_id, target_language_id]
+        if schema_name:
+            conditions.append("SchemaName = ?")
+            params.append(schema_name)
+        if table_name:
+            conditions.append("TableName = ?")
+            params.append(table_name)
+        sql = f"""
+SELECT FailureId, SchemaName, TableName, SourceLanguageId,
+       TargetLanguageId, EntityKeyJson, SourceRowJson, TargetExists,
+       MissingColumnsJson, FailureReason, AttemptCount
+FROM {quote_table(TRANSLATION_FAILURE_TABLE_SCHEMA, TRANSLATION_FAILURE_TABLE_NAME)}
+WHERE {' AND '.join(conditions)}
+ORDER BY LastFailedAt, FailureId
+"""
+        cursor = self._cursor(self.read_connection)
+        try:
+            rows = cursor.execute(sql, *params).fetchall()
+        finally:
+            cursor.close()
+
+        failures: list[TranslationFailureRecord] = []
+        for row in rows:
+            try:
+                entity_key_values = json.loads(row[5])
+                source_row = json.loads(row[6])
+                missing_columns = tuple(json.loads(row[8] or "[]"))
+                if not isinstance(entity_key_values, dict) or not isinstance(source_row, dict):
+                    raise ValueError("stored JSON is not an object")
+                failures.append(
+                    TranslationFailureRecord(
+                        failure_id=int(row[0]),
+                        schema_name=str(row[1]),
+                        table_name=str(row[2]),
+                        source_language_id=int(row[3]),
+                        target_language_id=int(row[4]),
+                        entity_key_values=dict(entity_key_values),
+                        source_row=dict(source_row),
+                        target_exists=bool(row[7]),
+                        missing_columns=tuple(str(item) for item in missing_columns),
+                        failure_reason=str(row[9] or ""),
+                        attempt_count=int(row[10] or 0),
+                    )
+                )
+            except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                # A malformed log row must not stop the normal translation
+                # run. Keep the row visible for manual repair and skip it.
+                continue
+        return failures
+
+    def record_translation_failure(
+        self,
+        *,
+        table: LocalizeTable,
+        source_language_id: int,
+        target_language_id: int,
+        entity_key_values: dict[str, object],
+        source_row: dict[str, object],
+        target_exists: bool,
+        missing_columns: tuple[str, ...],
+        failure_reason: str,
+    ) -> None:
+        """Insert or update one unresolved failure using a stable fingerprint."""
+
+        entity_json = _json_text(entity_key_values)
+        source_json = _json_text(source_row)
+        missing_json = _json_text(list(missing_columns))
+        fingerprint = _failure_fingerprint(
+            schema_name=table.schema_name,
+            table_name=table.table_name,
+            source_language_id=source_language_id,
+            target_language_id=target_language_id,
+            entity_key_values=entity_key_values,
+        )
+        table_name = quote_table(
+            TRANSLATION_FAILURE_TABLE_SCHEMA,
+            TRANSLATION_FAILURE_TABLE_NAME,
+        )
+        sql = f"""
+SET NOCOUNT ON;
+UPDATE {table_name}
+SET LastFailedAt = SYSUTCDATETIME(),
+    FailureReason = ?,
+    SourceRowJson = ?,
+    TargetExists = ?,
+    MissingColumnsJson = ?,
+    AttemptCount = AttemptCount + 1
+WHERE FailureFingerprint = ?;
+IF @@ROWCOUNT = 0
+BEGIN
+    INSERT INTO {table_name} (
+        FailureFingerprint, SchemaName, TableName, SourceLanguageId,
+        TargetLanguageId, EntityKeyJson, SourceRowJson, TargetExists,
+        MissingColumnsJson, FailureReason, FirstFailedAt, LastFailedAt,
+        AttemptCount
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, SYSUTCDATETIME(), SYSUTCDATETIME(), 1);
+END;
+"""
+        cursor = self._cursor(self.write_connection)
+        try:
+            cursor.execute(
+                sql,
+                str(failure_reason),
+                source_json,
+                1 if target_exists else 0,
+                missing_json,
+                fingerprint,
+                fingerprint,
+                table.schema_name,
+                table.table_name,
+                source_language_id,
+                target_language_id,
+                entity_json,
+                source_json,
+                1 if target_exists else 0,
+                missing_json,
+                str(failure_reason),
+            )
+        finally:
+            cursor.close()
+
+    def delete_translation_failure(self, failure_id: int) -> None:
+        table_name = quote_table(
+            TRANSLATION_FAILURE_TABLE_SCHEMA,
+            TRANSLATION_FAILURE_TABLE_NAME,
+        )
+        cursor = self._cursor(self.write_connection)
+        try:
+            cursor.execute(
+                f"DELETE FROM {table_name} WHERE FailureId = ?",
+                int(failure_id),
+            )
+        finally:
+            cursor.close()
+
     def _cursor(self, connection: object) -> object:
         cursor = connection.cursor()
         if self.command_timeout_seconds is not None:
@@ -599,3 +892,33 @@ def required(value: str | None) -> str:
     if value is None:
         raise ValueError("Table metadata is incomplete.")
     return value
+
+
+def _json_text(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _failure_fingerprint(
+    *,
+    schema_name: str,
+    table_name: str,
+    source_language_id: int,
+    target_language_id: int,
+    entity_key_values: dict[str, object],
+) -> str:
+    payload = _json_text(
+        {
+            "schema": schema_name.casefold(),
+            "table": table_name.casefold(),
+            "source_language_id": source_language_id,
+            "target_language_id": target_language_id,
+            "entity_key_values": entity_key_values,
+        }
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()

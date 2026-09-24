@@ -38,6 +38,14 @@ from translator_app.config import (
     RuntimeConfig,
     SqlServerConnectionSettings,
 )
+from translator_app.database_targets import (
+    BOTH_DATABASE_TARGET,
+    GUEREH_DATABASE_TARGET,
+    RUGSTRUST_DATABASE_TARGET,
+    RUGSTRUST_CERTIFICATION_TABLE,
+    RUGSTRUST_DEFAULT_SCHEMA,
+    normalize_database_target,
+)
 from translator_app.languages import LANGUAGES, get_language, rtl_display_text
 from translator_app.logging_config import configure_logging
 from translator_app.models import build_table_translation_plan
@@ -48,7 +56,11 @@ from translator_app.resx_service import (
 )
 from translator_app.retry import run_with_retry
 from translator_app.runtime_paths import application_dir
-from translator_app.service import DatabaseTranslationService, ProgressSnapshot
+from translator_app.service import (
+    DatabaseTranslationService,
+    ProgressSnapshot,
+    TranslationSummary,
+)
 from translator_app.sqlserver import (
     REQUIRED_ODBC_DRIVER,
     SqlServerLocalizationRepository,
@@ -536,24 +548,48 @@ class TranslatorGuiApp:
     def _build_variables(self) -> None:
         env = self.env_values
 
-        self.connection_string_var = StringVar(
-            value=env.get("SQLSERVER_CONNECTION_STRING", "")
-        )
         self.driver_var = StringVar(
-            value=env.get("SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server")
+            value=env.get("GUEREH_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server")
         )
-        self.server_var = StringVar(value=env.get("SQLSERVER_SERVER", ""))
-        self.database_var = StringVar(value=env.get("SQLSERVER_DATABASE", ""))
-        self.username_var = StringVar(value=env.get("SQLSERVER_USERNAME", ""))
-        self.password_var = StringVar(value=env.get("SQLSERVER_PASSWORD", ""))
+        self.server_var = StringVar(value=env.get("GUEREH_SQLSERVER_SERVER", ""))
+        self.database_var = StringVar(value=env.get("GUEREH_SQLSERVER_DATABASE", ""))
+        self.username_var = StringVar(value=env.get("GUEREH_SQLSERVER_USERNAME", ""))
+        self.password_var = StringVar(value=env.get("GUEREH_SQLSERVER_PASSWORD", ""))
         self.trusted_connection_var = BooleanVar(
-            value=parse_bool(env.get("SQLSERVER_TRUSTED_CONNECTION", "false"))
+            value=parse_bool(env.get("GUEREH_SQLSERVER_TRUSTED_CONNECTION", "false"))
         )
         self.encrypt_var = BooleanVar(
-            value=not parse_bool(env.get("SQLSERVER_NO_ENCRYPT", "false"))
+            value=not parse_bool(env.get("GUEREH_SQLSERVER_NO_ENCRYPT", "false"))
         )
         self.trust_server_certificate_var = BooleanVar(
-            value=parse_bool(env.get("SQLSERVER_TRUST_SERVER_CERTIFICATE", "true"))
+            value=parse_bool(env.get("GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE", "true"))
+        )
+        self.rugstrust_driver_var = StringVar(
+            value=env.get("RUGSTRUST_SQLSERVER_DRIVER", "ODBC Driver 18 for SQL Server")
+        )
+        self.rugstrust_server_var = StringVar(value=env.get("RUGSTRUST_SQLSERVER_SERVER", ""))
+        self.rugstrust_database_var = StringVar(value=env.get("RUGSTRUST_SQLSERVER_DATABASE", ""))
+        self.rugstrust_username_var = StringVar(value=env.get("RUGSTRUST_SQLSERVER_USERNAME", ""))
+        self.rugstrust_password_var = StringVar(value=env.get("RUGSTRUST_SQLSERVER_PASSWORD", ""))
+        self.rugstrust_trusted_connection_var = BooleanVar(
+            value=parse_bool(env.get("RUGSTRUST_SQLSERVER_TRUSTED_CONNECTION", "false"))
+        )
+        self.rugstrust_encrypt_var = BooleanVar(
+            value=not parse_bool(env.get("RUGSTRUST_SQLSERVER_NO_ENCRYPT", "false"))
+        )
+        self.rugstrust_trust_server_certificate_var = BooleanVar(
+            value=parse_bool(env.get("RUGSTRUST_SQLSERVER_TRUST_SERVER_CERTIFICATE", "true"))
+        )
+        self.rugstrust_schema_var = StringVar(
+            value=env.get("RUGSTRUST_SQLSERVER_SCHEMA", RUGSTRUST_DEFAULT_SCHEMA)
+        )
+        self.database_target_var = StringVar(
+            value=database_target_label(
+                normalize_database_target(
+                    env.get("DATABASE_TARGET", GUEREH_DATABASE_TARGET),
+                    rugstrust_available=bool(env.get("RUGSTRUST_SQLSERVER_SERVER") and env.get("RUGSTRUST_SQLSERVER_DATABASE")),
+                )
+            )
         )
 
         self.libretranslate_url_var = StringVar(
@@ -845,7 +881,9 @@ class TranslatorGuiApp:
         db_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 10))
         db_frame.columnconfigure(1, weight=1)
 
-        add_entry(db_frame, 0, "Connection string", self.connection_string_var)
+        ttk.Label(db_frame, text="GUEREH database", style="Field.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        )
         add_entry(db_frame, 1, "Driver", self.driver_var)
         add_entry(db_frame, 2, "Server", self.server_var)
         add_entry(db_frame, 3, "Database", self.database_var)
@@ -867,6 +905,33 @@ class TranslatorGuiApp:
             text="Trust server certificate",
             variable=self.trust_server_certificate_var,
         ).grid(row=8, column=0, columnspan=2, sticky="w")
+        ttk.Separator(db_frame, orient="horizontal").grid(
+            row=9, column=0, columnspan=2, sticky="ew", pady=(10, 8)
+        )
+        ttk.Label(db_frame, text="RUGSTRUST database", style="Field.TLabel").grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=(0, 4)
+        )
+        add_entry(db_frame, 11, "Driver", self.rugstrust_driver_var)
+        add_entry(db_frame, 12, "Server", self.rugstrust_server_var)
+        add_entry(db_frame, 13, "Database", self.rugstrust_database_var)
+        add_entry(db_frame, 14, "Username", self.rugstrust_username_var)
+        add_entry(db_frame, 15, "Password", self.rugstrust_password_var, show="*")
+        ttk.Checkbutton(
+            db_frame,
+            text="Trusted Connection",
+            variable=self.rugstrust_trusted_connection_var,
+        ).grid(row=16, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(
+            db_frame,
+            text="Encrypt",
+            variable=self.rugstrust_encrypt_var,
+        ).grid(row=17, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(
+            db_frame,
+            text="Trust server certificate",
+            variable=self.rugstrust_trust_server_certificate_var,
+        ).grid(row=18, column=0, columnspan=2, sticky="w")
+        add_entry(db_frame, 19, "RugsTrust schema", self.rugstrust_schema_var)
 
         translator_frame = ttk.LabelFrame(
             self.settings_tab,
@@ -932,15 +997,20 @@ class TranslatorGuiApp:
         ).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(
             button_frame,
+            text="Test RugsTrust Database",
+            command=self.test_rugstrust_database_connection,
+        ).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(
+            button_frame,
             text="Test LibreTranslate",
             command=self.test_libretranslate,
-        ).grid(row=0, column=1, padx=(0, 8))
+        ).grid(row=0, column=2, padx=(0, 8))
         ttk.Button(
             button_frame,
             text="Save Settings",
             command=self.save_settings,
             style="Accent.TButton",
-        ).grid(row=0, column=2)
+        ).grid(row=0, column=3)
 
     def _build_operation_tab(self) -> None:
         self.operation_tab.columnconfigure(0, weight=1)
@@ -976,6 +1046,23 @@ class TranslatorGuiApp:
             text="Dry-run: count only, do not insert rows",
             variable=self.dry_run_var,
         ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=4)
+        add_combo(
+            inputs,
+            3,
+            "Database",
+            self.database_target_var,
+            [
+                database_target_label(GUEREH_DATABASE_TARGET),
+                database_target_label(RUGSTRUST_DATABASE_TARGET),
+                database_target_label(BOTH_DATABASE_TARGET),
+            ],
+            0,
+        )
+        ttk.Label(
+            inputs,
+            text=f"RugsTrust table: {RUGSTRUST_DEFAULT_SCHEMA}.{RUGSTRUST_CERTIFICATION_TABLE}",
+            style="Field.TLabel",
+        ).grid(row=3, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=4)
 
         buttons = ttk.Frame(self.operation_tab, style="App.TFrame")
         buttons.grid(row=1, column=0, sticky="ew", pady=(12, 12))
@@ -1703,16 +1790,46 @@ class TranslatorGuiApp:
         )
         thread.start()
 
-    def _database_test_worker(self, connection_string: str) -> None:
+    def test_rugstrust_database_connection(self) -> None:
+        try:
+            rugstrust_settings = self._build_rugstrust_connection_settings()
+            connection_string = rugstrust_settings.build_connection_string()
+        except Exception as exc:
+            self._show_error(
+                "RugsTrust Database",
+                str(exc),
+            )
+            return
+        self._append_log("Testing RugsTrust database connection...")
+        thread = threading.Thread(
+            target=self._database_test_worker,
+            args=(
+                connection_string,
+                RUGSTRUST_CERTIFICATION_TABLE,
+                self.rugstrust_schema_var.get().strip() or RUGSTRUST_DEFAULT_SCHEMA,
+            ),
+            daemon=True,
+        )
+        thread.start()
+
+    def _database_test_worker(
+        self,
+        connection_string: str,
+        table_name: str | None = None,
+        schema_name: str | None = None,
+    ) -> None:
         connection = None
         try:
             connection = connect(connection_string, autocommit=False)
-            tables = SqlServerSchemaReader(connection).get_localize_tables()
+            tables = SqlServerSchemaReader(connection).get_localize_tables(
+                schema_name=schema_name if table_name else None,
+                table_name=table_name,
+            )
             self.events.put(
                 (
                     "message",
                     (
-                        "Database Connection",
+                        "RugsTrust Database Connection" if table_name else "Database Connection",
                         f"Connection succeeded. Translation tables found: {len(tables)}",
                     ),
                 )
@@ -2028,6 +2145,12 @@ class TranslatorGuiApp:
 
     def start_test_then_prompt(self) -> None:
         test_table = self.test_table_var.get().strip()
+        selected_target = database_target_from_label(self.database_target_var.get())
+        if selected_target == RUGSTRUST_DATABASE_TARGET:
+            # RugsTrust runs always use the fixed localization table and therefore do
+            # not need an interactive test-table prompt.
+            self.start_single_table()
+            return
         if not test_table:
             self._show_error("Test Table", "Enter a test table name.")
             return
@@ -2054,7 +2177,10 @@ class TranslatorGuiApp:
         self._start_job("test-then-prompt", test_config)
 
     def start_single_table(self) -> None:
+        selected_target = database_target_from_label(self.database_target_var.get())
         table_name = self.operation_table_var.get().strip() or self.test_table_var.get().strip()
+        if selected_target == RUGSTRUST_DATABASE_TARGET:
+            table_name = RUGSTRUST_CERTIFICATION_TABLE
         if not table_name:
             self._show_error(
                 "Table",
@@ -2548,8 +2674,6 @@ class TranslatorGuiApp:
         self.worker_thread.start()
 
     def _translation_worker(self, job_name: str, config: RuntimeConfig) -> None:
-        read_connection = None
-        write_connection = None
         log_file: Path | None = None
         logger: logging.Logger | None = None
         service_started = False
@@ -2562,29 +2686,42 @@ class TranslatorGuiApp:
             )
             self.events.put(("log-file", str(log_file)))
 
-            read_connection = connect(config.connection_string, autocommit=False)
-            write_connection = (
-                connect(config.connection_string, autocommit=True)
-                if not config.dry_run
-                else read_connection
-            )
-
-            service = DatabaseTranslationService(
-                schema_reader=SqlServerSchemaReader(read_connection),
-                repository=SqlServerLocalizationRepository(
-                    read_connection,
-                    write_connection,
-                ),
-                translator=create_translator(config, logger=logger),
-                logger=logger,
-                progress_callback=lambda snapshot: self.events.put(
-                    ("progress", snapshot)
-                ),
-                cancel_callback=self.cancel_event.is_set,
-                pause_callback=self.pause_event.is_set,
-            )
-            service_started = True
-            summary = service.run(config)
+            summaries: list[TranslationSummary] = []
+            for target_config in self._database_runtime_configs(config):
+                self.events.put(
+                    ("log", f"Database target started: {target_config.database_target}")
+                )
+                read_connection = connect(
+                    target_config.connection_string,
+                    autocommit=False,
+                )
+                write_connection = (
+                    connect(target_config.connection_string, autocommit=True)
+                    if not target_config.dry_run
+                    else read_connection
+                )
+                try:
+                    service = DatabaseTranslationService(
+                        schema_reader=SqlServerSchemaReader(read_connection),
+                        repository=SqlServerLocalizationRepository(
+                            read_connection,
+                            write_connection,
+                        ),
+                        translator=create_translator(target_config, logger=logger),
+                        logger=logger,
+                        progress_callback=lambda snapshot: self.events.put(
+                            ("progress", snapshot)
+                        ),
+                        cancel_callback=self.cancel_event.is_set,
+                        pause_callback=self.pause_event.is_set,
+                    )
+                    service_started = True
+                    summaries.append(service.run(target_config))
+                finally:
+                    if write_connection is not read_connection:
+                        write_connection.close()
+                    read_connection.close()
+            summary = merge_translation_summaries(summaries)
             self.events.put(("job-done", (job_name, summary, str(log_file))))
         except Exception as exc:
             if logger is not None and not service_started:
@@ -2610,14 +2747,31 @@ class TranslatorGuiApp:
                     ),
                 )
             )
-        finally:
-            try:
-                if write_connection is not None and write_connection is not read_connection:
-                    write_connection.close()
-                if read_connection is not None:
-                    read_connection.close()
-            except Exception:
-                pass
+
+    def _database_runtime_configs(
+        self,
+        config: RuntimeConfig,
+    ) -> tuple[RuntimeConfig, ...]:
+        target = normalize_database_target(
+            config.database_target,
+            rugstrust_available=config.rugstrust_connection_settings is not None,
+        )
+        guereh = replace(config, database_target=GUEREH_DATABASE_TARGET)
+        if target == GUEREH_DATABASE_TARGET:
+            return (guereh,)
+        if config.rugstrust_connection_settings is None:
+            raise ValueError("Configure RugsTrust database settings before selecting it.")
+        rugstrust = replace(
+            config,
+            connection_string=config.rugstrust_connection_settings.build_connection_string(),
+            schema_name=config.rugstrust_schema_name or RUGSTRUST_DEFAULT_SCHEMA,
+            table_name=RUGSTRUST_CERTIFICATION_TABLE,
+            excluded_table_names=(),
+            database_target=RUGSTRUST_DATABASE_TARGET,
+        )
+        if target == RUGSTRUST_DATABASE_TARGET:
+            return (rugstrust,)
+        return (guereh, rugstrust)
 
     def stop_operation(self) -> None:
         if not self._is_worker_running():
@@ -2756,15 +2910,35 @@ class TranslatorGuiApp:
             raise ValueError("Source and target languages must be different.")
         target_languages = tuple(get_language(language_id) for language_id in target_ids)
 
-        connection_settings = self._build_connection_settings()
+        database_target = database_target_from_label(self.database_target_var.get())
+        rugstrust_connection_settings = self._build_rugstrust_connection_settings()
+        rugstrust_available = bool(
+            rugstrust_connection_settings.server.strip()
+            and rugstrust_connection_settings.database.strip()
+        )
+        database_target = normalize_database_target(
+            database_target,
+            rugstrust_available=rugstrust_available,
+        )
+        if database_target == RUGSTRUST_DATABASE_TARGET:
+            if not rugstrust_available:
+                raise ValueError("Configure RugsTrust database settings before selecting it.")
+            connection_string = rugstrust_connection_settings.build_connection_string()
+            schema_name = normalize_sql_name(self.rugstrust_schema_var.get()) or RUGSTRUST_DEFAULT_SCHEMA
+            table_name = RUGSTRUST_CERTIFICATION_TABLE
+        else:
+            connection_settings = self._build_connection_settings()
+            connection_string = connection_settings.build_connection_string()
+            schema_name = normalize_sql_name(schema_name)
+            table_name = normalize_sql_name(table_name)
 
         return RuntimeConfig(
-            connection_string=connection_settings.build_connection_string(),
+            connection_string=connection_string,
             source_language=get_language(source_language_id),
             target_language=target_languages[0],
             dry_run=self.dry_run_var.get(),
-            schema_name=normalize_sql_name(schema_name),
-            table_name=normalize_sql_name(table_name),
+            schema_name=schema_name,
+            table_name=table_name,
             batch_size=max(parse_int(self.batch_size_var.get(), "Batch size"), 1),
             progress_every=max(
                 parse_int(self.progress_every_var.get(), "Progress every"),
@@ -2794,6 +2968,9 @@ class TranslatorGuiApp:
                 ),
             ),
             target_languages=target_languages,
+            database_target=database_target,
+            rugstrust_connection_settings=(rugstrust_connection_settings if rugstrust_available else None),
+            rugstrust_schema_name=normalize_sql_name(self.rugstrust_schema_var.get()) or RUGSTRUST_DEFAULT_SCHEMA,
         )
 
     def _build_cleanup_config(
@@ -2940,7 +3117,7 @@ class TranslatorGuiApp:
         username = self.username_var.get().strip() or None
         password = self.password_var.get()
         return SqlServerConnectionSettings(
-            connection_string=self.connection_string_var.get().strip() or None,
+            connection_string=None,
             driver=self.driver_var.get().strip() or "ODBC Driver 18 for SQL Server",
             server=self.server_var.get().strip(),
             database=self.database_var.get().strip(),
@@ -2949,6 +3126,23 @@ class TranslatorGuiApp:
             trusted_connection=self._effective_trusted_connection(username, password),
             encrypt=self.encrypt_var.get(),
             trust_server_certificate=self.trust_server_certificate_var.get(),
+        )
+
+    def _build_rugstrust_connection_settings(self) -> SqlServerConnectionSettings:
+        return SqlServerConnectionSettings(
+            connection_string=None,
+            driver=self.rugstrust_driver_var.get().strip() or "ODBC Driver 18 for SQL Server",
+            server=self.rugstrust_server_var.get().strip(),
+            database=self.rugstrust_database_var.get().strip(),
+            username=self.rugstrust_username_var.get().strip() or None,
+            password=self.rugstrust_password_var.get(),
+            trusted_connection=self.rugstrust_trusted_connection_var.get()
+            and not (
+                bool(self.rugstrust_username_var.get().strip())
+                or self.rugstrust_password_var.get() not in {None, ""}
+            ),
+            encrypt=self.rugstrust_encrypt_var.get(),
+            trust_server_certificate=self.rugstrust_trust_server_certificate_var.get(),
         )
 
     def _effective_trusted_connection(
@@ -2971,19 +3165,36 @@ class TranslatorGuiApp:
 
     def _settings_env_values(self) -> dict[str, str]:
         return {
-            "SQLSERVER_CONNECTION_STRING": self.connection_string_var.get().strip(),
-            "SQLSERVER_DRIVER": self.driver_var.get().strip(),
-            "SQLSERVER_SERVER": self.server_var.get().strip(),
-            "SQLSERVER_DATABASE": self.database_var.get().strip(),
-            "SQLSERVER_USERNAME": self.username_var.get().strip(),
-            "SQLSERVER_PASSWORD": self.password_var.get(),
-            "SQLSERVER_TRUSTED_CONNECTION": bool_to_env(
+            "GUEREH_SQLSERVER_DRIVER": self.driver_var.get().strip(),
+            "GUEREH_SQLSERVER_SERVER": self.server_var.get().strip(),
+            "GUEREH_SQLSERVER_DATABASE": self.database_var.get().strip(),
+            "GUEREH_SQLSERVER_USERNAME": self.username_var.get().strip(),
+            "GUEREH_SQLSERVER_PASSWORD": self.password_var.get(),
+            "GUEREH_SQLSERVER_TRUSTED_CONNECTION": bool_to_env(
                 self._effective_trusted_connection()
             ),
-            "SQLSERVER_NO_ENCRYPT": bool_to_env(not self.encrypt_var.get()),
-            "SQLSERVER_TRUST_SERVER_CERTIFICATE": bool_to_env(
+            "GUEREH_SQLSERVER_NO_ENCRYPT": bool_to_env(not self.encrypt_var.get()),
+            "GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE": bool_to_env(
                 self.trust_server_certificate_var.get()
             ),
+            "DATABASE_TARGET": database_target_from_label(self.database_target_var.get()),
+            "RUGSTRUST_SQLSERVER_DRIVER": self.rugstrust_driver_var.get().strip(),
+            "RUGSTRUST_SQLSERVER_SERVER": self.rugstrust_server_var.get().strip(),
+            "RUGSTRUST_SQLSERVER_DATABASE": self.rugstrust_database_var.get().strip(),
+            "RUGSTRUST_SQLSERVER_USERNAME": self.rugstrust_username_var.get().strip(),
+            "RUGSTRUST_SQLSERVER_PASSWORD": self.rugstrust_password_var.get(),
+            "RUGSTRUST_SQLSERVER_TRUSTED_CONNECTION": bool_to_env(
+                self.rugstrust_trusted_connection_var.get()
+                and not (
+                    bool(self.rugstrust_username_var.get().strip())
+                    or self.rugstrust_password_var.get() not in {None, ""}
+                )
+            ),
+            "RUGSTRUST_SQLSERVER_NO_ENCRYPT": bool_to_env(not self.rugstrust_encrypt_var.get()),
+            "RUGSTRUST_SQLSERVER_TRUST_SERVER_CERTIFICATE": bool_to_env(
+                self.rugstrust_trust_server_certificate_var.get()
+            ),
+            "RUGSTRUST_SQLSERVER_SCHEMA": self.rugstrust_schema_var.get().strip() or RUGSTRUST_DEFAULT_SCHEMA,
             "LIBRETRANSLATE_URL": self.libretranslate_url_var.get().strip(),
             "LIBRETRANSLATE_API_KEY": self.libretranslate_api_key_var.get().strip(),
             "REQUEST_TIMEOUT_SECONDS": self.request_timeout_var.get().strip(),
@@ -4630,6 +4841,42 @@ def format_language_code_list(codes: tuple[str, ...] | list[str]) -> str:
 def language_id_from_label(label: str) -> int:
     raw_id = label.split("-", 1)[0].strip()
     return get_language(int(raw_id)).id
+
+
+def database_target_label(target: str) -> str:
+    return {
+        GUEREH_DATABASE_TARGET: "Guereh database",
+        RUGSTRUST_DATABASE_TARGET: "RugsTrust database",
+        BOTH_DATABASE_TARGET: "Both databases",
+    }.get(target, "Guereh database")
+
+
+def database_target_from_label(label: str) -> str:
+    return {
+        "Guereh database": GUEREH_DATABASE_TARGET,
+        "RugsTrust database": RUGSTRUST_DATABASE_TARGET,
+        "Both databases": BOTH_DATABASE_TARGET,
+    }.get(label, GUEREH_DATABASE_TARGET)
+
+
+def merge_translation_summaries(
+    summaries: list[TranslationSummary],
+) -> TranslationSummary:
+    """Combine sequential Guereh/RugsTrust GUI runs into one summary."""
+
+    result = TranslationSummary()
+    for summary in summaries:
+        result.discovered_tables += summary.discovered_tables
+        result.eligible_tables += summary.eligible_tables
+        result.skipped_tables += summary.skipped_tables
+        result.pending_rows += summary.pending_rows
+        result.processed_rows += summary.processed_rows
+        result.inserted_rows += summary.inserted_rows
+        result.updated_rows += summary.updated_rows
+        result.skipped_existing_rows += summary.skipped_existing_rows
+        result.failed_rows += summary.failed_rows
+        result.unfinished_records.extend(summary.unfinished_records)
+    return result
 
 
 def phase_label(phase: str) -> str:
