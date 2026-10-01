@@ -25,6 +25,7 @@ from translator_app.cleanup_service import (
     DatabaseCleanupService,
 )
 from translator_app.config import (
+    DEFAULT_EXCLUDED_TRANSLATION_TABLES,
     RetrySettings,
     RuntimeConfig,
     SqlServerConnectionSettings,
@@ -73,6 +74,8 @@ class ScheduledJobConfig:
     database_target: str = "auto"
     rugstrust_connection: SqlServerConnectionSettings | None = None
     rugstrust_schema_name: str = RUGSTRUST_DEFAULT_SCHEMA
+    retry_failed_rows: bool = False
+    excluded_table_names: tuple[str, ...] = DEFAULT_EXCLUDED_TRANSLATION_TABLES
 
 
 @dataclass(frozen=True)
@@ -334,6 +337,8 @@ def _run_translation(
         database_target=config.database_target,
         rugstrust_connection_settings=config.rugstrust_connection,
         rugstrust_schema_name=config.rugstrust_schema_name,
+        retry_failed_rows=config.retry_failed_rows,
+        excluded_table_names=config.excluded_table_names,
     )
     read_connection = connect(runtime_config.connection_string, autocommit=False)
     write_connection: object = read_connection
@@ -426,6 +431,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=not parse_env_bool("GUEREH_SQLSERVER_TRUST_SERVER_CERTIFICATE", True),
     )
     parser.add_argument("--source-language-id", type=int)
+    parser.add_argument(
+        "--retry-failed-rows",
+        action="store_true",
+        default=parse_env_bool("RETRY_FAILED_ROWS", False),
+        help="Retry rows already recorded in the failure log once before normal work.",
+    )
     parser.add_argument(
         "--database-target",
         choices=("guereh", "rugstrust", "both", "auto"),
@@ -585,6 +596,7 @@ def build_job_config(args: argparse.Namespace) -> ScheduledJobConfig:
         database_target=database_target,
         rugstrust_connection=rugstrust_connection,
         rugstrust_schema_name=(args.rugstrust_schema or "").strip() or RUGSTRUST_DEFAULT_SCHEMA,
+        retry_failed_rows=args.retry_failed_rows,
     )
 
 

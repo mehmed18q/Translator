@@ -6,6 +6,36 @@ from pathlib import Path
 from translator_app.languages import LanguageOption
 
 
+# Tables omitted from automatic translation runs. The GUI may opt them back in
+# through its table selection dialog.
+DEFAULT_EXCLUDED_TRANSLATION_TABLES: tuple[str, ...] = (
+    "Tbl_Yarn_TypeLocalize",
+    "Tbl_PileLocalize",
+    "Tbl_WarpLocalize",
+    "Tbl_DesignPatternLocalize",
+    "Tbl_WeftLocalize",
+    "Tbl_SizeLocalize",
+    "Tbl_ColorsLocalize",
+    "Tbl_KnotTypeLocalize",
+    "Tbl_Yarn_ColorLocalize",
+    "Tbl_CityLocalize",
+    "Tbl_Orginality_CityLocalize",
+    "AssociationLocalize",
+    "GalleryAgenciesLocalize",
+    "Tbl_GalleristsLocalize",
+    "SiteMenusLocalize",
+)
+_DEFAULT_EXCLUDED_TRANSLATION_TABLE_KEYS = frozenset(
+    name.casefold() for name in DEFAULT_EXCLUDED_TRANSLATION_TABLES
+)
+
+
+def is_default_excluded_translation_table(table_name: str) -> bool:
+    """Match either a bare table name or a schema-qualified display name."""
+
+    return table_name.rsplit(".", 1)[-1].casefold() in _DEFAULT_EXCLUDED_TRANSLATION_TABLE_KEYS
+
+
 @dataclass(frozen=True)
 class SqlServerConnectionSettings:
     connection_string: str | None
@@ -90,6 +120,9 @@ class RuntimeConfig:
     # assembled only at the final database-open boundary.
     rugstrust_connection_settings: SqlServerConnectionSettings | None = None
     rugstrust_schema_name: str = "dbo"
+    # Existing failure-log rows are skipped by default. Set this explicitly
+    # when a controlled retry pass is desired.
+    retry_failed_rows: bool = False
 
     def selected_target_languages(self) -> tuple[LanguageOption, ...]:
         """Return the destination queue, falling back to the legacy field."""

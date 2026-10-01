@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Callable
@@ -83,6 +84,10 @@ HTML_PATTERN = re.compile(
 )
 
 
+class TranslationUnavailableError(RuntimeError):
+    """Raised when a source value cannot be translated or validated."""
+
+
 class DatabaseTranslationService:
     def __init__(
         self,
@@ -100,6 +105,7 @@ class DatabaseTranslationService:
         self.translator = translator
         self.logger = logger
         self._translation_cache: dict[tuple[str, str, str, str], str] = {}
+        self._translation_failure_cache: dict[tuple[str, str, str, str], str] = {}
         self.progress_callback = progress_callback
         self.cancel_callback = cancel_callback
         self.pause_callback = pause_callback
@@ -110,13 +116,19 @@ class DatabaseTranslationService:
         self._language_start_processed = 0
         self._language_start_pending = 0
         self._target_language_queue_codes: tuple[str, ...] = ()
-        # Rows that failed during the retry pass are deliberately skipped by
-        # the normal iterator in this run. They remain in the SQL log and are
-        # retried on the next invocation.
+        # Rows that fail during the explicit retry pass are deliberately
+        # skipped by the normal iterator in this run. They remain in the SQL
+        # log and can be retried by a later intentional retry pass.
         self._retry_skipped_keys: set[tuple[object, ...]] = set()
+        self._logged_failure_skipped_keys: set[tuple[object, ...]] = set()
 
     def run(self, config: RuntimeConfig) -> TranslationSummary:
         summary = TranslationSummary()
+        # A service instance may be reused by the GUI or an embedding caller;
+        # cached provider results must never turn a later run into a permanent
+        # skip after the provider has recovered.
+        self._translation_cache.clear()
+        self._translation_failure_cache.clear()
         try:
             if not config.dry_run:
                 ensure_failure_log = getattr(
@@ -139,6 +151,7 @@ class DatabaseTranslationService:
                 self._target_language_index = index
                 self._current_target_language = target_language.code
                 self._retry_skipped_keys.clear()
+                self._logged_failure_skipped_keys.clear()
                 self._language_start_processed = summary.processed_rows
                 self._language_start_pending = summary.pending_rows
                 target_config = replace(
@@ -234,7 +247,7 @@ class DatabaseTranslationService:
             for excluded_table in excluded_tables:
                 self._record_unfinished(
                     summary,
-                    f"table={excluded_table} | status=excluded | reason=excluded by user selection",
+                    f"table={excluded_table} | status=excluded | reason=excluded from translation",
                 )
             tables = [
                 table
@@ -461,11 +474,19 @@ class DatabaseTranslationService:
                     target_exists = False
                     missing_columns: tuple[str, ...] = ()
                     try:
-                        if self._failure_identity(
+                        failure_identity = self._failure_identity(
                             table,
                             config,
                             entity_key_values,
-                        ) in self._retry_skipped_keys:
+                        )
+                        if failure_identity in self._logged_failure_skipped_keys:
+                            row_status = "skipped-failure-log"
+                            self._record_unfinished(
+                                summary,
+                                f"table={table.display_name} | row={entity_value} | "
+                                "status=skipped | reason=already recorded in failure log",
+                            )
+                        elif failure_identity in self._retry_skipped_keys:
                             summary.failed_rows += 1
                             table_failed += 1
                             row_status = "skipped-retry-failure"
@@ -477,7 +498,7 @@ class DatabaseTranslationService:
                         else:
                             target_exists = bool(source_row.get(TARGET_EXISTS_COLUMN_NAME))
                             if not target_exists:
-                                translated_values = self._translate_row(
+                                translated_values = self._translate_row_for_storage(
                                     plan,
                                     source_row,
                                     config,
@@ -506,7 +527,7 @@ class DatabaseTranslationService:
                                     source_row,
                                 )
                                 if missing_columns:
-                                    translated_values = self._translate_row(
+                                    translated_values = self._translate_row_for_storage(
                                         plan,
                                         source_row,
                                         config,
@@ -550,14 +571,18 @@ class DatabaseTranslationService:
                             summary,
                             f"table={table.display_name} | row={entity_value} | status={unfinished_status(exc)} | reason={exc}",
                         )
-                        self._persist_translation_failure(
-                            config=config,
-                            plan=plan,
-                            source_row=source_row,
-                            entity_key_values=entity_key_values,
-                            target_exists=target_exists,
-                            missing_columns=missing_columns,
-                            failure_reason=str(exc),
+                        if isinstance(exc, TranslationUnavailableError):
+                            self._persist_translation_failure(
+                                config=config,
+                                plan=plan,
+                                source_row=source_row,
+                                entity_key_values=entity_key_values,
+                                target_exists=target_exists,
+                                missing_columns=missing_columns,
+                                failure_reason=str(exc),
+                            )
+                        self._retry_skipped_keys.add(
+                            self._failure_identity(table, config, entity_key_values)
                         )
                         self.logger.exception(
                             "Row failed: %s | %s | reason=%s",
@@ -776,7 +801,14 @@ class DatabaseTranslationService:
         config: RuntimeConfig,
         summary: TranslationSummary,
     ) -> None:
-        """Retry persisted row failures before discovering new pending rows."""
+        """Retry persisted failures only when explicitly requested.
+
+        Normal scheduled runs still load the failure log and exclude those
+        rows from the current queue, but do not call the translator again.
+        This prevents an unavailable provider from producing the same errors
+        on every nightly run. ``retry_failed_rows`` provides an explicit,
+        reversible retry pass when the provider has recovered.
+        """
 
         if config.dry_run:
             return
@@ -797,6 +829,23 @@ class DatabaseTranslationService:
             )
             return
         if not failures:
+            return
+
+        if not config.retry_failed_rows:
+            for failure in failures:
+                self._logged_failure_skipped_keys.add(
+                    self._failure_identity_from_values(
+                        failure.schema_name,
+                        failure.table_name,
+                        config,
+                        failure.entity_key_values,
+                    )
+                )
+            self.logger.info(
+                "Persisted translation failures skipped without retry: count=%s target=%s",
+                len(failures),
+                config.target_language.code,
+            )
             return
 
         try:
@@ -847,7 +896,7 @@ class DatabaseTranslationService:
                 self._record_unfinished(
                     summary,
                     f"table={table.display_name} | status=excluded | "
-                    "reason=excluded by user selection during persisted failure retry",
+                    "reason=excluded from translation during persisted failure retry",
                 )
                 continue
             plan: TableTranslationPlan | None = None
@@ -876,7 +925,7 @@ class DatabaseTranslationService:
                     if not missing_columns:
                         summary.skipped_existing_rows += 1
                     else:
-                        translated_values = self._translate_row(
+                        translated_values = self._translate_row_for_storage(
                             plan,
                             source_row,
                             config,
@@ -903,7 +952,11 @@ class DatabaseTranslationService:
                         else:
                             summary.skipped_existing_rows += 1
                 else:
-                    translated_values = self._translate_row(plan, source_row, config)
+                    translated_values = self._translate_row_for_storage(
+                        plan,
+                        source_row,
+                        config,
+                    )
                     run_with_retry(
                         lambda: self.repository.insert_translation(
                             plan,
@@ -946,16 +999,17 @@ class DatabaseTranslationService:
                     f"row={format_entity_key_values(failure.entity_key_values)} | "
                     f"status=skipped | reason=persisted failure retry failed: {exc}",
                 )
-                self._persist_translation_failure(
-                    config=config,
-                    plan=plan,
-                    source_row=failure.source_row,
-                    entity_key_values=failure.entity_key_values,
-                    target_exists=target_exists,
-                    missing_columns=missing_columns,
-                    failure_reason=str(exc),
-                    table=table,
-                )
+                if isinstance(exc, TranslationUnavailableError):
+                    self._persist_translation_failure(
+                        config=config,
+                        plan=plan,
+                        source_row=failure.source_row,
+                        entity_key_values=failure.entity_key_values,
+                        target_exists=target_exists,
+                        missing_columns=missing_columns,
+                        failure_reason=str(exc),
+                        table=table,
+                    )
                 self.logger.warning(
                     "Persisted translation failure remains unresolved: table=%s row=%s reason=%s",
                     table.display_name,
@@ -1007,14 +1061,37 @@ class DatabaseTranslationService:
         config: RuntimeConfig,
         entity_key_values: dict[str, object],
     ) -> tuple[object, ...]:
-        return (
+        return self._failure_identity_from_values(
             table.schema_name.casefold(),
             table.table_name.casefold(),
+            config,
+            entity_key_values,
+        )
+
+    @staticmethod
+    def _failure_identity_from_values(
+        schema_name: str,
+        table_name: str,
+        config: RuntimeConfig,
+        entity_key_values: dict[str, object],
+    ) -> tuple[object, ...]:
+        return (
+            schema_name.casefold(),
+            table_name.casefold(),
             config.source_language.id,
             config.target_language.id,
             tuple(
-                (key, repr(entity_key_values.get(key)))
-                for key in table.key_column_names
+                (
+                    key,
+                    json.dumps(
+                        value,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        default=str,
+                    ),
+                )
+                for key, value in sorted(entity_key_values.items())
             ),
         )
 
@@ -1047,21 +1124,62 @@ class DatabaseTranslationService:
             text_format,
             text,
         )
-        if cache_key not in self._translation_cache:
-            self._translation_cache[cache_key] = run_with_retry(
-                lambda: self.translator.translate(
-                    text,
-                    config.source_language.code,
-                    config.target_language.code,
-                    text_format=text_format,
-                ),
-                operation_name=operation_name,
-                attempts=config.retry.attempts,
-                initial_delay_seconds=config.retry.initial_delay_seconds,
-                backoff_factor=config.retry.backoff_factor,
-                logger=self.logger,
+        if cache_key in self._translation_failure_cache:
+            raise TranslationUnavailableError(
+                self._translation_failure_cache[cache_key]
             )
+        if cache_key not in self._translation_cache:
+            # A provider failure is row-local and should be recorded/skipped
+            # immediately. Database writes retain their configured retry
+            # policy, but translation itself is attempted only once. Cache
+            # the failure too, so repeated rows with the same source value do
+            # not call an unavailable provider again during this run.
+            try:
+                self._translation_cache[cache_key] = run_with_retry(
+                    lambda: self.translator.translate(
+                        text,
+                        config.source_language.code,
+                        config.target_language.code,
+                        text_format=text_format,
+                    ),
+                    operation_name=operation_name,
+                    attempts=1,
+                    initial_delay_seconds=0,
+                    backoff_factor=1,
+                    logger=self.logger,
+                )
+            except Exception as exc:
+                message = f"{operation_name} unavailable: {exc}"
+                self._translation_failure_cache[cache_key] = message
+                raise TranslationUnavailableError(message) from exc
         return self._translation_cache[cache_key]
+
+    def _translate_row_for_storage(
+        self,
+        plan: TableTranslationPlan,
+        source_row: dict[str, object],
+        config: RuntimeConfig,
+        *,
+        column_names: tuple[str, ...] | None = None,
+    ) -> dict[str, object]:
+        """Translate one row and mark validation failures as row-local.
+
+        This boundary deliberately wraps only the translation phase. Errors
+        raised later by an INSERT/UPDATE are database-write failures and are
+        therefore not persisted as provider failures.
+        """
+
+        try:
+            return self._translate_row(
+                plan,
+                source_row,
+                config,
+                column_names=column_names,
+            )
+        except TranslationUnavailableError:
+            raise
+        except ValueError as exc:
+            raise TranslationUnavailableError(str(exc)) from exc
 
     def _missing_target_text_columns(
         self,

@@ -37,6 +37,7 @@ from translator_app.config import (
     RetrySettings,
     RuntimeConfig,
     SqlServerConnectionSettings,
+    is_default_excluded_translation_table,
 )
 from translator_app.database_targets import (
     BOTH_DATABASE_TARGET,
@@ -113,6 +114,12 @@ class TableSelectionItem:
     pending_rows: int = 0
     eligible: bool = True
     reason: str | None = None
+
+
+def table_checked_by_default(item: TableSelectionItem, *, cleanup: bool = False) -> bool:
+    if not item.eligible:
+        return False
+    return cleanup or not is_default_excluded_translation_table(item.display_name)
 
 
 class ScrollableFrame(ttk.Frame):
@@ -612,6 +619,9 @@ class TranslatorGuiApp:
         self.batch_size_var = StringVar(value=env.get("BATCH_SIZE", "100"))
         self.progress_every_var = StringVar(value=env.get("PROGRESS_EVERY", "1"))
         self.log_dir_var = StringVar(value=env.get("LOG_DIR", "logs"))
+        self.retry_failed_rows_var = BooleanVar(
+            value=parse_bool(env.get("RETRY_FAILED_ROWS", "false"))
+        )
 
         self.source_language_var = StringVar(value=language_label(1))
         target_ids = parse_language_ids(
@@ -986,6 +996,11 @@ class TranslatorGuiApp:
             column_offset=2,
         )
         add_entry(runtime_frame, 1, "Log dir", self.log_dir_var, column_offset=0)
+        ttk.Checkbutton(
+            runtime_frame,
+            text="Retry logged failures on this run",
+            variable=self.retry_failed_rows_var,
+        ).grid(row=1, column=2, columnspan=2, sticky="w", padx=(12, 0), pady=4)
 
         button_frame = ttk.Frame(self.settings_tab, style="App.TFrame")
         button_frame.grid(row=2, column=0, columnspan=2, sticky="w", pady=(14, 0))
@@ -2403,7 +2418,7 @@ class TranslatorGuiApp:
             selection_vars.clear()
             eligible_names = tuple(item.display_name for item in items if item.eligible)
             for index, item in enumerate(items, start=1):
-                variable = BooleanVar(value=item.eligible)
+                variable = BooleanVar(value=table_checked_by_default(item, cleanup=cleanup))
                 if item.eligible:
                     selection_vars[item.display_name] = variable
                 suffix = (
@@ -2971,6 +2986,7 @@ class TranslatorGuiApp:
             database_target=database_target,
             rugstrust_connection_settings=(rugstrust_connection_settings if rugstrust_available else None),
             rugstrust_schema_name=normalize_sql_name(self.rugstrust_schema_var.get()) or RUGSTRUST_DEFAULT_SCHEMA,
+            retry_failed_rows=self.retry_failed_rows_var.get(),
         )
 
     def _build_cleanup_config(
@@ -3205,6 +3221,7 @@ class TranslatorGuiApp:
             "BATCH_SIZE": self.batch_size_var.get().strip(),
             "PROGRESS_EVERY": self.progress_every_var.get().strip(),
             "LOG_DIR": self.log_dir_var.get().strip(),
+            "RETRY_FAILED_ROWS": bool_to_env(self.retry_failed_rows_var.get()),
             "TARGET_LANGUAGE_IDS": ",".join(
                 str(language_id)
                 for language_id in self._selected_target_ids(

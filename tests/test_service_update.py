@@ -5,7 +5,11 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from translator_app.config import RetrySettings, RuntimeConfig
+from translator_app.config import (
+    DEFAULT_EXCLUDED_TRANSLATION_TABLES,
+    RetrySettings,
+    RuntimeConfig,
+)
 from translator_app.languages import get_language
 from translator_app.models import ColumnInfo, LocalizeTable
 from translator_app.service import DatabaseTranslationService
@@ -113,6 +117,18 @@ class PersistedFailureRepository(FakeRepository):
         self.recorded_failures.append(kwargs)
 
 
+class DatabaseWriteFailingRepository(PersistedFailureRepository):
+    def insert_translation(
+        self,
+        plan: object,
+        *,
+        source_row: dict[str, object],
+        translated_values: dict[str, object],
+        target_language_id: int,
+    ) -> None:
+        raise RuntimeError("database write unavailable")
+
+
 class PrefixTranslator(Translator):
     def __init__(self) -> None:
         self.calls: list[tuple[str, str]] = []
@@ -130,6 +146,9 @@ class PrefixTranslator(Translator):
 
 
 class FailingTranslator(Translator):
+    def __init__(self) -> None:
+        self.calls = 0
+
     def translate(
         self,
         text: str,
@@ -138,6 +157,7 @@ class FailingTranslator(Translator):
         *,
         text_format: str = "text",
     ) -> str:
+        self.calls += 1
         raise RuntimeError("provider unavailable")
 
 
@@ -151,6 +171,34 @@ class StrictFormattingHandler(logging.Handler):
 
 
 class ServiceUpdateTests(unittest.TestCase):
+    def test_default_exclusion_skips_table_before_translation(self) -> None:
+        row = {
+            "SampleId": 1,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        repository = FakeRepository([row])
+        translator = PrefixTranslator()
+        service = DatabaseTranslationService(
+            schema_reader=FakeSchemaReader(
+                [replace(build_table(), table_name="SiteMenusLocalize"), build_table()]
+            ),
+            repository=repository,
+            translator=translator,
+            logger=logging.getLogger("test_default_table_exclusion"),
+        )
+
+        summary = service.run(
+            replace(build_config(), excluded_table_names=DEFAULT_EXCLUDED_TRANSLATION_TABLES)
+        )
+
+        self.assertEqual(summary.skipped_tables, 1)
+        self.assertEqual(summary.inserted_rows, 1)
+        self.assertEqual(len(repository.inserts), 1)
+
     def test_persists_row_when_translation_fails(self) -> None:
         row = {
             "SampleId": 10,
@@ -170,6 +218,50 @@ class ServiceUpdateTests(unittest.TestCase):
         self.assertEqual(len(repository.recorded_failures), 1)
         self.assertEqual(repository.recorded_failures[0]["entity_key_values"], {"SampleId": 10})
         self.assertFalse(repository.recorded_failures[0]["target_exists"])
+
+    def test_does_not_call_provider_again_for_same_failed_text_in_one_run(self) -> None:
+        rows = [
+            {
+                "SampleId": 10,
+                "Title": "خانه",
+                "Description": "توضیح",
+                TARGET_EXISTS_COLUMN_NAME: 0,
+                target_value_column_name("Title"): None,
+                target_value_column_name("Description"): None,
+            },
+            {
+                "SampleId": 11,
+                "Title": "خانه",
+                "Description": "توضیح",
+                TARGET_EXISTS_COLUMN_NAME: 0,
+                target_value_column_name("Title"): None,
+                target_value_column_name("Description"): None,
+            },
+        ]
+        repository = PersistedFailureRepository(rows, [])
+        translator = FailingTranslator()
+
+        summary = build_service(repository, translator).run(build_config())
+
+        self.assertEqual(summary.failed_rows, 2)
+        self.assertEqual(translator.calls, 1)
+        self.assertEqual(len(repository.recorded_failures), 2)
+
+    def test_does_not_persist_database_write_failure_as_translation_failure(self) -> None:
+        row = {
+            "SampleId": 11,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        repository = DatabaseWriteFailingRepository([row], [])
+
+        summary = build_service(repository, PrefixTranslator()).run(build_config())
+
+        self.assertEqual(summary.failed_rows, 1)
+        self.assertEqual(repository.recorded_failures, [])
 
     def test_retries_persisted_failure_before_new_pending_rows(self) -> None:
         source_row = {
@@ -196,12 +288,47 @@ class ServiceUpdateTests(unittest.TestCase):
         repository = PersistedFailureRepository([], [failure])
         translator = PrefixTranslator()
 
-        summary = build_service(repository, translator).run(build_config())
+        summary = build_service(repository, translator).run(
+            replace(build_config(), retry_failed_rows=True)
+        )
 
         self.assertEqual(summary.inserted_rows, 1)
         self.assertEqual(repository.deleted_failures, [44])
         self.assertEqual(repository.failures, [])
         self.assertEqual(repository.inserts[0]["source_row"], source_row)
+
+    def test_skips_persisted_failure_without_retry_by_default(self) -> None:
+        source_row = {
+            "SampleId": 9,
+            "Title": "خانه",
+            "Description": "توضیح",
+            TARGET_EXISTS_COLUMN_NAME: 0,
+            target_value_column_name("Title"): None,
+            target_value_column_name("Description"): None,
+        }
+        failure = TranslationFailureRecord(
+            failure_id=45,
+            schema_name="dbo",
+            table_name="SampleLocalize",
+            source_language_id=1,
+            target_language_id=2,
+            entity_key_values={"SampleId": 9},
+            source_row=source_row,
+            target_exists=False,
+            missing_columns=(),
+            failure_reason="previous failure",
+            attempt_count=2,
+        )
+        repository = PersistedFailureRepository([source_row], [failure])
+        translator = PrefixTranslator()
+
+        summary = build_service(repository, translator).run(build_config())
+
+        self.assertEqual(summary.inserted_rows, 0)
+        self.assertEqual(summary.failed_rows, 0)
+        self.assertEqual(summary.processed_rows, 1)
+        self.assertEqual(translator.calls, [])
+        self.assertEqual(repository.deleted_failures, [])
 
     def test_updates_only_empty_target_text_columns(self) -> None:
         row = {

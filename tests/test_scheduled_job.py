@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from translator_app.config import RetrySettings, SqlServerConnectionSettings
+from translator_app.config import (
+    DEFAULT_EXCLUDED_TRANSLATION_TABLES,
+    RetrySettings,
+    SqlServerConnectionSettings,
+)
 from translator_app.languages import get_language
 from translator_app.scheduled_job import (
     JobAlreadyRunning,
@@ -48,6 +52,7 @@ class ScheduledJobTests(unittest.TestCase):
         self.assertEqual(tuple(item.code for item in config.cleanup_languages), ("ar",))
         self.assertEqual((config.schema_name, config.table_name), ("dbo", "SampleLocalize"))
         self.assertTrue(config.dry_run)
+        self.assertEqual(config.excluded_table_names, DEFAULT_EXCLUDED_TRANSLATION_TABLES)
 
     def test_lock_prevents_a_second_process_lock_on_same_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

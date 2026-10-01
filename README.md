@@ -13,7 +13,7 @@
   <img alt="Python 3.12" src="https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white">
   <img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4?logo=windows&logoColor=white">
   <img alt="Tkinter GUI" src="https://img.shields.io/badge/GUI-Tkinter-2ea44f">
-  <img alt="91 tests passing" src="https://img.shields.io/badge/tests-91%20passing-2ea44f">
+  <img alt="94 tests passing" src="https://img.shields.io/badge/tests-94%20passing-2ea44f">
 </p>
 
 <p align="center">
@@ -129,9 +129,12 @@ Created by Sadeq Kiumarsi | 2026 | Version 2.4.1 | GitHub
 ```
 
 When `Run All Tables` is selected, a modal review lists the tables ordered by
-pending source-text characters (smallest first), with pending row counts. All
-eligible tables are checked initially. Individual tables can be excluded, or
-the `Select all` and `Clear all` controls can be used before choosing `Run selected`.
+pending source-text characters (smallest first), with pending row counts. Eligible
+tables are checked initially except the default translation exclusions listed in
+`translator_app/config.py`. Those tables remain available to select manually.
+The all-table CLI run uses the same exclusions.
+Individual tables can be excluded, or the `Select all` and `Clear all` controls
+can be used before choosing `Run selected`.
 
 ## Empty localization cleanup
 
@@ -370,7 +373,8 @@ Copy [`job.env.example`](job.env.example) to a protected location and fill in
 the SQL Server credentials. `SOURCE_LANGUAGE_ID`, `TARGET_LANGUAGE_IDS`,
 `CLEANUP_LANGUAGE_IDS`, `JOB_SCHEMA`, and optional `JOB_TABLE` control the
 operation. Omitting `JOB_TABLE` processes all eligible `Localize`/
-`Localizes` tables. The job executes writes by default; set `JOB_DRY_RUN=true`
+`Localizes` tables except the default translation exclusions in
+`translator_app/config.py`. The job executes writes by default; set `JOB_DRY_RUN=true`
 or pass `--dry-run` for a preview.
 
 The job is non-interactive and automatic. With `DATABASE_TARGET=auto` (the
@@ -411,13 +415,17 @@ sqlcmd -S "$GUEREH_SQLSERVER_SERVER" -d "$GUEREH_SQLSERVER_DATABASE" \
 If `DATABASE_TARGET=auto` or `both` is used, each database keeps its own
 failure records; the warm-up runs separately for Guereh and RugsTrust.
 
-When a database translation row fails during an execute-mode run, it is
-upserted into this table. At the beginning of each target-language run, the
-application and scheduled job read the unresolved rows first. A successful
-retry writes the translation and removes the log row. A failed retry updates
-the reason/attempt count and skips that row for the rest of the current run;
-the normal queue continues with other rows. `--dry-run` never writes, updates,
-or deletes failure-log rows.
+When translation itself (including translation-response validation) fails for
+a row during an execute-mode run, it is upserted into this table. Database
+write failures are handled by the normal database retry policy and are not
+classified as provider failures. At the beginning of each target-language run,
+the application and scheduled job read the unresolved rows first. Normal runs
+skip these logged rows without calling the provider again. To make one
+intentional retry pass, set `RETRY_FAILED_ROWS=true` (or pass
+`--retry-failed-rows`); a successful retry writes the translation and removes
+the log row, while a failed retry remains logged. New translation attempts are
+also made only once per text value; database writes retain their configured
+retry policy. `--dry-run` never writes, updates, or deletes failure-log rows.
 
 ## Build the Windows executable
 
@@ -455,7 +463,7 @@ Run the complete test suite with:
 python -m unittest discover -s tests -p "test*.py"
 ```
 
-The current release passes **91 tests**.
+The current release passes **97 tests**.
 
 ## Versioning
 

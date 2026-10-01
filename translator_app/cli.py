@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from translator_app.config import (
+    DEFAULT_EXCLUDED_TRANSLATION_TABLES,
     RetrySettings,
     RuntimeConfig,
     SqlServerConnectionSettings,
@@ -110,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-language-id", type=int)
     parser.add_argument("--target-language-id", type=int)
+    parser.add_argument(
+        "--retry-failed-rows",
+        action="store_true",
+        default=parse_env_bool("RETRY_FAILED_ROWS", False),
+        help="Retry rows already recorded in the failure log once before normal work.",
+    )
     parser.add_argument(
         "--database-target",
         choices=("guereh", "rugstrust", "both", "auto"),
@@ -275,6 +282,10 @@ def build_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         ),
         database_target=database_target,
         rugstrust_connection_settings=rugstrust_connection_settings,
+        retry_failed_rows=args.retry_failed_rows,
+        excluded_table_names=(
+            DEFAULT_EXCLUDED_TRANSLATION_TABLES if table_name is None else ()
+        ),
     )
 
 
