@@ -20,9 +20,10 @@ DEFAULT_EXCLUDED_TRANSLATION_TABLES: tuple[str, ...] = (
     "Tbl_Yarn_ColorLocalize",
     "Tbl_CityLocalize",
     "Tbl_Orginality_CityLocalize",
+    "Tbl_GalleristsLocalize",
     "AssociationLocalize",
     "GalleryAgenciesLocalize",
-    "Tbl_GalleristsLocalize",
+    "SlidersLocalize",
     "SiteMenusLocalize",
 )
 _DEFAULT_EXCLUDED_TRANSLATION_TABLE_KEYS = frozenset(
